@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-background text-white antialiased;
+}
+
+/* Glassmorphism utility */
+.glass {
+  @apply bg-surface/60 backdrop-blur-md border border-border;
+}
+
+.sidebar-item-active {
+  @apply bg-primary/10 text-primary border-r-2 border-primary;
+}

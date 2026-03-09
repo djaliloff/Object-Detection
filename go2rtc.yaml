@@ -1,0 +1,12 @@
+api:
+  listen: ":1984"
+
+rtsp:
+  listen: ":8554"
+
+webrtc:
+  listen: ":8555"
+
+# Example of how streams will be added (can be managed via API)
+streams:
+  # test: rtsp://user:pass@camera-ip/path

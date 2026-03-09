@@ -1,0 +1,5 @@
+numpy
+shapely
+redis
+psycopg2-binary
+sqlalchemy
