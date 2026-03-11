@@ -1,0 +1,14 @@
+ main
+ .\redis\redis-server.exe
+
+camera-gateway
+ ..\venv311\Scripts\python.exe gateway.py
+
+ai-engine
+ ..\venv311\Scripts\python.exe inference.py
+
+backend-api
+ ..\venv311\Scripts\python.exe main.py
+
+frontend
+ npm start 

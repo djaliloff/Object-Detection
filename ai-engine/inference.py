@@ -396,34 +396,45 @@ class InferenceEngine:
         
         while self.running:
             try:
-                # Get frame from queue
-                frame_data = self.redis_client.lpop('frame_queue')
-                if frame_data is None:
+                # Atomically pull all frames and flush the queue to prevent latency buildup
+                pipe = self.redis_client.pipeline()
+                pipe.lrange('frame_queue', 0, -1)
+                pipe.delete('frame_queue')
+                queue_content = pipe.execute()[0]
+                
+                if not queue_content:
                     await asyncio.sleep(0.01)  # Small delay if no frames
                     continue
                 
-                # Deserialize frame
-                frame = self._deserialize_frame(frame_data)
+                # Keep only the latest frame from each camera
+                latest_frames = {}
+                for frame_data in queue_content:
+                    try:
+                        frame = self._deserialize_frame(frame_data)
+                        latest_frames[frame.camera_id] = frame
+                    except Exception as e:
+                        logger.error(f"Error deserializing frame: {e}")
                 
-                # Run inference
-                start_time = time.time()
-                detections = self.model_registry.run_inference(frame)
-                inference_time = time.time() - start_time
-                
-                # Update stats
-                self._update_stats(inference_time, len(detections))
-                
-                # Serialize and publish results
-                detection_data = self._serialize_detections(detections, frame)
-                
-                # Send to detection queue for event processor
-                self.redis_client.rpush('detection_queue', detection_data)
-                
-                # Also publish to WebSocket clients
-                self.redis_client.publish('surveillance_detections', detection_data)
-                
-                logger.debug(f"Processed frame {frame.frame_id} in {inference_time:.3f}s")
-                
+                for cam_id, frame in latest_frames.items():
+                    # Run inference
+                    start_time = time.time()
+                    detections = self.model_registry.run_inference(frame)
+                    inference_time = time.time() - start_time
+                    
+                    # Update stats
+                    self._update_stats(inference_time, len(detections))
+                    
+                    # Serialize and publish results
+                    detection_data = self._serialize_detections(detections, frame)
+                    
+                    # Send to detection queue for event processor
+                    self.redis_client.rpush('detection_queue', detection_data)
+                    
+                    # Also publish to WebSocket clients
+                    self.redis_client.publish('surveillance_detections', detection_data)
+                    
+                    logger.debug(f"Processed frame {frame.frame_id} in {inference_time:.3f}s")
+                    
             except Exception as e:
                 import traceback
                 logger.error(f"Error processing frame: {e}\\n{traceback.format_exc()}")

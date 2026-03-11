@@ -3,7 +3,7 @@ models:
     name: "YOLOv8 Nano (RGB)"
     modality: "rgb"
     model_path: "../models/yolov8n.pt"
-    input_size: [640, 640]
+    input_size: [640, 480]
     classes:
       - person
       - bicycle
