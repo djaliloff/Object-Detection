@@ -1,0 +1,159 @@
+models:
+  rgb_yolov8n:
+    name: "YOLOv8 Nano (RGB)"
+    modality: "rgb"
+    model_path: "../yolov8n.onnx"
+    input_size: [640, 640]
+    classes:
+      - person
+      - bicycle
+      - car
+      - motorcycle
+      - airplane
+      - bus
+      - train
+      - truck
+      - boat
+      - traffic light
+      - fire hydrant
+      - stop sign
+      - parking meter
+      - bench
+      - bird
+      - cat
+      - dog
+      - horse
+      - sheep
+      - cow
+      - elephant
+      - bear
+      - zebra
+      - giraffe
+      - backpack
+      - umbrella
+      - handbag
+      - tie
+      - suitcase
+      - frisbee
+      - skis
+      - snowboard
+      - sports ball
+      - kite
+      - baseball bat
+      - baseball glove
+      - skateboard
+      - surfboard
+      - tennis racket
+      - bottle
+      - wine glass
+      - cup
+      - fork
+      - knife
+      - spoon
+      - bowl
+      - banana
+      - apple
+      - sandwich
+      - orange
+      - broccoli
+      - carrot
+      - hot dog
+      - pizza
+      - donut
+      - cake
+      - chair
+      - couch
+      - potted plant
+      - bed
+      - dining table
+      - toilet
+      - tv
+      - laptop
+      - mouse
+      - remote
+      - keyboard
+      - cell phone
+      - microwave
+      - oven
+      - toaster
+      - sink
+      - refrigerator
+      - book
+      - clock
+      - vase
+      - scissors
+      - teddy bear
+      - hair drier
+      - toothbrush
+    preprocessing:
+      normalize: true
+      resize: true
+      pad: true
+    postprocessing:
+      confidence_threshold: 0.25
+      nms_threshold: 0.45
+      max_detections: 1000
+
+  thermal_yolov8n:
+    name: "YOLOv8 Nano (Thermal)"
+    modality: "thermal"
+    model_path: "../models/thermal_yolov8n.onnx"  # To be trained
+    input_size: [640, 640]
+    classes:
+      - person
+      - car
+      - bicycle
+      - dog
+      - motorcycle
+    preprocessing:
+      normalize: true
+      resize: true
+      pad: true
+      convert_grayscale_to_rgb: true  # Stack single channel to 3 channels
+    postprocessing:
+      confidence_threshold: 0.3
+      nms_threshold: 0.45
+      max_detections: 500
+
+  rgb_t_fusion:
+    name: "RGB-T Fusion Model"
+    modality: "rgb_t"
+    model_path: "../models/rgb_t_fusion.onnx"  # To be trained
+    input_size: [640, 640, 6]  # RGB + Thermal channels
+    classes:
+      - person
+      - car
+      - bicycle
+      - motorcycle
+    preprocessing:
+      normalize: true
+      resize: true
+      pad: true
+      illumination_aware_gate: true
+    postprocessing:
+      confidence_threshold: 0.35
+      nms_threshold: 0.45
+      max_detections: 500
+
+# Model routing configuration
+routing:
+  default_rgb_model: "rgb_yolov8n"
+  default_thermal_model: "thermal_yolov8n"
+  default_fusion_model: "rgb_t_fusion"
+  
+  # Camera-specific model assignments (optional)
+  camera_models:
+    # camera_id: model_name
+
+# Performance settings
+performance:
+  batch_size: 1
+  max_batch_size: 8
+  inference_timeout_ms: 100
+  gpu_memory_fraction: 0.8
+  
+# Model warmup
+warmup:
+  enabled: true
+  iterations: 3
+  input_shape: [1, 3, 640, 640]
