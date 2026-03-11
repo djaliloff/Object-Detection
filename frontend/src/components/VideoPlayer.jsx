@@ -89,8 +89,16 @@ const VideoPlayer = ({ camera, className = "" }) => {
     };
   }, [connect, cameraId]);
 
-  // Check stream_url or fallback fields
-  const streamUrl = camera?.stream_url || camera?.mjpeg_url || camera?.hls_url || '';
+  // Check stream_url or fallback fields including nested config objects
+  const streamUrl = camera?.stream_url 
+    || camera?.mjpeg_url 
+    || camera?.hls_url 
+    || camera?.config_json?.stream_url 
+    || camera?.config?.stream_url 
+    || camera?.config_json?.mjpeg_url 
+    || camera?.config?.mjpeg_url
+    || camera?.rtsp_url 
+    || '';
   const isMjpeg = useMemo(() => isMjpegUrl(streamUrl), [streamUrl]);
 
   if (!cameraId) return null;
@@ -122,10 +130,10 @@ const VideoPlayer = ({ camera, className = "" }) => {
               <img
                 src={streamUrl}
                 alt={`Flux ${cameraName}`}
-                className="w-full h-full object-cover transition-opacity duration-700"
-                style={{ opacity: isLoading ? 0 : 1 }}
+                className="w-full h-full object-cover"
                 onLoad={() => setIsLoading(false)}
-                onError={() => {
+                onError={(e) => {
+                  console.error('Stream load error:', streamUrl);
                   setImgError(true);
                   setIsLoading(false);
                 }}

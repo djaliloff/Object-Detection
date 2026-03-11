@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { 
-  Grid
+  Grid,
+  Filter
 } from 'lucide-react';
 import MultiCameraGrid from '../components/MultiCameraGrid';
 import { camerasAPI } from '../utils/api';
@@ -9,6 +10,7 @@ import { camerasAPI } from '../utils/api';
 const Surveillance = () => {
   const [gridLayout, setGridLayout] = useState('2x2'); // 1x1, 2x2, 3x3, 4x4
   const [selectedCameraId, setSelectedCameraId] = useState(null);
+  const [filterModality, setFilterModality] = useState('all'); // all, rgb, thermal, mjpeg, fused
   
   // Fetch cameras
   const { data: cameras, isLoading } = useQuery({
@@ -25,6 +27,12 @@ const Surveillance = () => {
     setSelectedCameraId(camera.id);
     setGridLayout('1x1');
   };
+
+  const filteredCameras = useMemo(() => {
+    if (!Array.isArray(cameras)) return [];
+    if (filterModality === 'all') return cameras;
+    return cameras.filter(c => c.modality === filterModality || (c.modality === 'rgb' && filterModality === 'mjpeg' && (c.config_json?.mjpeg_url || c.mjpeg_url)));
+  }, [cameras, filterModality]);
 
   if (isLoading) {
     return (
@@ -49,31 +57,55 @@ const Surveillance = () => {
               </h1>
             </div>
             <p className="text-[10px] font-black uppercase tracking-widest text-neutral-500">
-              {Array.isArray(cameras) ? cameras.filter(c => c.status === 'online').length : 0} Nodes Active &bull; Real-Time Tactical Feed
+              {filteredCameras.filter(c => c.status === 'online').length} Nodes Active &bull; Real-Time Tactical Feed
             </p>
           </div>
 
-          <div className="flex items-center space-x-2 bg-neutral-900/50 p-1 rounded-xl border border-white/5 backdrop-blur-xl shrink-0">
-            {['1x1', '2x2', '3x3', '4x4'].map(layout => (
-              <button
-                key={layout}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setGridLayout(layout);
-                }}
-                className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
-                  gridLayout === layout ? 'bg-blue-600 text-white shadow-lg' : 'text-neutral-500 hover:text-white'
-                }`}
-              >
-                {layout}
-              </button>
-            ))}
+          <div className="flex items-center space-x-4">
+            {/* Modality Filter */}
+            <div className="flex items-center space-x-2 bg-neutral-900/50 p-1 rounded-xl border border-white/5 backdrop-blur-xl shrink-0">
+              <div className="px-3 flex items-center space-x-1 border-r border-white/5 text-neutral-500">
+                <Filter className="w-3.5 h-3.5" />
+              </div>
+              {['all', 'rgb', 'thermal', 'mjpeg', 'fused'].map(modality => (
+                <button
+                  key={modality}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setFilterModality(modality);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
+                    filterModality === modality ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-neutral-500 hover:text-white'
+                  }`}
+                >
+                  {modality}
+                </button>
+              ))}
+            </div>
+
+            {/* Layout Controls */}
+            <div className="flex items-center space-x-2 bg-neutral-900/50 p-1 rounded-xl border border-white/5 backdrop-blur-xl shrink-0">
+              {['1x1', '2x2', '3x3', '4x4'].map(layout => (
+                <button
+                  key={layout}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setGridLayout(layout);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
+                    gridLayout === layout ? 'bg-blue-600 text-white shadow-lg' : 'text-neutral-500 hover:text-white'
+                  }`}
+                >
+                  {layout}
+                </button>
+              ))}
+            </div>
           </div>
         </header>
 
         <div className="flex-1 bg-neutral-900/20 rounded-[40px] border border-white/5 overflow-hidden shadow-2xl relative">
           <MultiCameraGrid 
-            cameras={Array.isArray(cameras) ? cameras : []}
+            cameras={filteredCameras}
             selectedCameraId={selectedCameraId}
             onCameraSelect={handleCameraSelect}
             onMaximize={handleMaximize}
