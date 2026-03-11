@@ -1,0 +1,138 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv*/
+env*/
+ENV*/
+.venv/
+.env/
+.ENV/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.eslintcache
+
+# Frontend build artifacts
+frontend/build/
+frontend/dist/
+frontend/.next/
+frontend/out/
+
+# AI/ML specific
+models/*.pt
+models/*.onnx
+models/*.pth
+models/*.h5
+models/*.pb
+*.pt
+*.onnx
+*.pth
+*.h5
+*.pb
+
+# Data directories
+data/
+datasets/
+*.csv
+*.json
+*.xml
+*.parquet
+
+# Camera and video files
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.flv
+*.wmv
+recordings/
+temp_videos/
+
+# Configuration files with secrets
+config/secrets.yaml
+config/local.yaml
+*.key
+*.pem
+*.crt
+
+# Testing
+.coverage
+.pytest_cache/
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Docker
+.dockerignore
+
+# Backup files
+*.bak
+*.backup
+*.tmp
+
+# Specific to this project
+venv311/
+yolov8n.pt
+yolov8n.onnx
