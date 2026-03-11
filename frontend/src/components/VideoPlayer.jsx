@@ -23,7 +23,7 @@ function snapshotUrl(streamUrl = '') {
 }
 
 /* ── WebSocket Base URL ────────────────────────────────────── */
-const WS_BASE = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`;
+const WS_BASE = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:8000/ws/live`;
 
 const VideoPlayer = ({ camera, className = "" }) => {
   const { token } = useAuthStore();
@@ -39,7 +39,6 @@ const VideoPlayer = ({ camera, className = "" }) => {
   const cameraId = camera?.id;
   const cameraStatus = camera?.status;
   const cameraName = camera?.name;
-  const cameraLocation = camera?.location;
 
   /* ── WebSocket for Bounding Boxes ─────────────────────────── */
   const connect = useCallback(() => {

@@ -2,7 +2,7 @@ models:
   rgb_yolov8n:
     name: "YOLOv8 Nano (RGB)"
     modality: "rgb"
-    model_path: "../yolov8n.onnx"
+    model_path: "../models/yolov8n.pt"
     input_size: [640, 640]
     classes:
       - person
@@ -142,7 +142,7 @@ routing:
   default_fusion_model: "rgb_t_fusion"
   
   # Camera-specific model assignments (optional)
-  camera_models:
+  camera_models: {}
     # camera_id: model_name
 
 # Performance settings

@@ -12,7 +12,6 @@ from typing import Dict, List, Optional, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from abc import ABC, abstractmethod
-from onvif import ONVIFCamera
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -92,15 +91,21 @@ class RTSPCameraAdapter(CameraAdapter):
                     protocol, rest = rtsp_url.split("://", 1)
                     rtsp_url = f"{protocol}://{self.config.username}:{self.config.password}@{rest}"
             
-            # Create VideoCapture with GStreamer backend for lower latency
-            # Fallback to OpenCV backend if GStreamer not available
-            try:
-                # Try GStreamer pipeline first
-                pipeline = f"rtspsrc location={rtsp_url} ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! appsink"
-                self.cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-            except:
-                # Fallback to OpenCV
+            # Bypass GStreamer pipeline entirely for direct HTTP streams (like IP Webcam)
+            if rtsp_url.startswith('http'):
                 self.cap = cv2.VideoCapture(rtsp_url)
+            else:
+                try:
+                    # Try GStreamer pipeline first
+                    pipeline = f"rtspsrc location={rtsp_url} ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! appsink"
+                    self.cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+                    
+                    if not self.cap.isOpened():
+                        # Explicitly fallback since failed captures don't throw Python errors
+                        self.cap = cv2.VideoCapture(rtsp_url)
+                except:
+                    # Fallback to standard OpenCV
+                    self.cap = cv2.VideoCapture(rtsp_url)
             
             if not self.cap.isOpened():
                 logger.error(f"Failed to open RTSP stream for camera {self.config.id}")
@@ -142,17 +147,22 @@ class RTSPCameraAdapter(CameraAdapter):
                 return None, None
             
             self.frame_count += 1
-            self.last_frame_time = time.time()
+            current_time = time.time()
+            prev_time = getattr(self, 'last_frame_time', current_time - 0.033)
+            delta = current_time - prev_time
+            if delta <= 0:
+                delta = 0.033  # fallback 30fps
+            self.last_frame_time = current_time
             
             metadata = FrameMetadata(
                 camera_id=self.config.id,
-                frame_id=f"{self.config.id}_{int(time.time() * 1000)}_{self.frame_count}",
+                frame_id=f"{self.config.id}_{int(current_time * 1000)}_{self.frame_count}",
                 timestamp=datetime.now(),
                 modality=self.config.modality,
                 resolution=frame.shape[:2],
                 frame_number=self.frame_count,
                 metadata={
-                    'fps_actual': 1.0 / (time.time() - getattr(self, 'last_frame_time', time.time())),
+                    'fps_actual': 1.0 / delta,
                     'connection_attempts': self.connection_attempts
                 }
             )
@@ -340,7 +350,7 @@ class CameraManager:
                 if not adapter.is_connected():
                     logger.warning(f"Camera {camera_id} disconnected, attempting reconnect")
                     if not await adapter.connect():
-                        await asyncio.sleep(self.reconnect_delay)
+                        await asyncio.sleep(5.0)
                         continue
                 
                 # Get frame
@@ -487,35 +497,48 @@ class CameraGateway:
         }
 
 if __name__ == "__main__":
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    import uuid
+    import sys
+    sys.path.append(os.path.join(os.path.dirname(__file__), "..", "backend-api"))
+
+    # Setup database connection
+    DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/surveillance")
+    engine = create_engine(DATABASE_URL)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
     # Example usage
     gateway = CameraGateway()
     
-    # Add some example cameras
-    example_cameras = [
-        CameraConfig(
-            id="cam_001",
-            name="Front Door",
-            ip="192.168.1.100",
-            port=554,
-            rtsp_url="rtsp://192.168.1.100:554/stream",
-            username="admin",
-            password="password",
-            modality="rgb",
-            fps_target=15
-        ),
-        CameraConfig(
-            id="cam_002",
-            name="Thermal Camera",
-            ip="192.168.1.101",
-            port=554,
-            rtsp_url="rtsp://192.168.1.101:554/stream",
-            modality="thermal",
-            fps_target=10
-        )
-    ]
-    
-    for camera in example_cameras:
-        gateway.camera_manager.add_camera(camera)
+    # Load cameras from database
+    db = SessionLocal()
+    try:
+        from models import Camera
+        cameras = db.query(Camera).filter(Camera.status == 'online').all()
+        for c in cameras:
+            # For MJPEG streams, prioritize the mjpeg parameter if available in the database config block
+            rtsp = c.rtsp_url
+            if c.config_json and "stream_url" in c.config_json:
+                rtsp = c.config_json["stream_url"]
+
+            config = CameraConfig(
+                id=str(c.id),
+                name=c.name,
+                ip=c.ip,
+                port=c.port,
+                rtsp_url=rtsp,
+                username=None,
+                password=None,
+                modality=c.modality,
+                fps_target=10  # Reduced to prevent queue flooding
+            )
+            gateway.camera_manager.add_camera(config)
+            logger.info(f"Loaded database camera: {config.name} at {config.rtsp_url}")
+    except Exception as e:
+        logger.error(f"Failed to load cameras from DB: {e}")
+    finally:
+        db.close()
     
     try:
         asyncio.run(gateway.start())

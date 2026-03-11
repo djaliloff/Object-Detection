@@ -413,9 +413,17 @@ async def websocket_endpoint(websocket: WebSocket, camera_id: Optional[str] = No
     await manager.connect(websocket, camera_id)
     try:
         while True:
-            # Keep connection alive and listen for messages
-            data = await websocket.receive_text()
-            # Handle any incoming messages if needed
+            data_str = await websocket.receive_text()
+            try:
+                msg = json.loads(data_str)
+                if msg.get("type") == "subscribe" and "camera_id" in msg:
+                    cam_id = msg["camera_id"]
+                    if cam_id not in manager.camera_subscriptions:
+                        manager.camera_subscriptions[cam_id] = []
+                    if websocket not in manager.camera_subscriptions[cam_id]:
+                        manager.camera_subscriptions[cam_id].append(websocket)
+            except json.JSONDecodeError:
+                pass
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
@@ -426,11 +434,11 @@ async def process_redis_messages():
         return
     
     pubsub = redis_client.pubsub()
-    pubsub.subscribe("surveillance_events", "surveillance_frames", "camera_status")
+    pubsub.subscribe("surveillance_events", "surveillance_frames", "camera_status", "surveillance_detections")
     
     while True:
         try:
-            message = pubsub.get_message(timeout=1.0)
+            message = pubsub.get_message(timeout=0.001)
             if message and message["type"] == "message":
                 channel = message["channel"]
                 data = json.loads(message["data"])
@@ -442,7 +450,13 @@ async def process_redis_messages():
                     await manager.broadcast(data, data.get("camera_id"))
                 elif channel == "camera_status":
                     await manager.broadcast(data, data.get("camera_id"))
-                    
+                elif channel == "surveillance_detections" or channel == b"surveillance_detections":
+                    # Add type so the frontend recognizes it
+                    if 'type' not in data:
+                        data['type'] = 'detection'
+                    await manager.broadcast(data, data.get("camera_id"))
+            
+            await asyncio.sleep(0.01)        
         except Exception as e:
             logger.error(f"Error processing Redis message: {e}")
             await asyncio.sleep(1)
