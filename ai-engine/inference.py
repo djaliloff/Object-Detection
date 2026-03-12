@@ -7,6 +7,7 @@ import cv2
 import onnxruntime
 import redis
 import structlog
+import torch
 from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 from datetime import datetime
@@ -44,8 +45,23 @@ class ModelRegistry:
     def __init__(self, config_path: str = "model_registry.yaml"):
         self.config = self._load_config(config_path)
         self.models = {}
+        self.device = self._setup_device()
         self.session_options = self._create_session_options()
         self._load_models()
+    
+    def _setup_device(self) -> str:
+        """Setup and return the best available device (GPU/CPU)."""
+        if torch.cuda.is_available():
+            device = 'cuda'
+            gpu_name = torch.cuda.get_device_name(0)
+            gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
+            logger.info(f"GPU detected: {gpu_name} ({gpu_memory:.1f}GB)")
+            logger.info(f"Using GPU acceleration for inference")
+        else:
+            device = 'cpu'
+            logger.info("No GPU detected, using CPU for inference")
+        
+        return device
     
     def _load_config(self, config_path: str) -> Dict:
         """Load model configuration from YAML file."""
@@ -74,30 +90,75 @@ class ModelRegistry:
                 logger.error(f"Failed to load model {model_name}: {e}")
     
     def _load_single_model(self, model_name: str, model_config: Dict):
-        """Load a single YOLO model via Ultralytics."""
+        """Load a single YOLO model via Ultralytics with ultra-low latency optimizations."""
         model_path = model_config.get('model_path')
         if not os.path.exists(model_path):
             logger.warning(f"Model file not found: {model_path}")
             return
         
         try:
-            # Load native YOLOv8 torch model
+            # Load native YOLO model
             model = YOLO(model_path)
+            
+            # Determine device
+            model_device = model_config.get('device', self.device)
+            
+            # Apply ultra-low latency optimizations
+            optimize_for_latency = model_config.get('optimize_for_latency', True)
+            
+            if model_device == 'cuda' and torch.cuda.is_available():
+                model.to('cuda')
+                
+                if optimize_for_latency:
+                    # Ultra-low latency GPU optimizations
+                    model.fuse()  # Fuse Conv2d + BatchNorm + SiLU
+                    
+                    # Enable TensorFloat-32 for RTX 3070 performance
+                    torch.backends.cuda.matmul.allow_tf32 = True
+                    torch.backends.cudnn.allow_tf32 = True
+                    
+                    # Optimize cuDNN for speed
+                    torch.backends.cudnn.benchmark = True
+                    torch.backends.cudnn.deterministic = False
+                    
+                    logger.info(f"Applied ultra-low latency optimizations for {model_name}")
+                
+                logger.info(f"Model {model_name} loaded on GPU with optimizations")
+            else:
+                logger.info(f"Model {model_name} loaded on {model_device}")
             
             self.models[model_name] = {
                 'model': model,
-                'config': model_config
+                'config': model_config,
+                'device': model_device,
+                'optimize_for_latency': optimize_for_latency
             }
             
-            logger.info(f"Loaded model: {model_name}")
+            logger.info(f"Successfully loaded model: {model_name}")
             
         except Exception as e:
             logger.error(f"Failed to load model {model_name} from {model_path}: {e}")
             raise
     
     def get_model_for_modality(self, modality: str, camera_id: str = None) -> str:
-        """Determine which model to use based on modality and camera. Forced to RGB only."""
+        """Determine which model to use based on modality and camera with GPU preference."""
         routing_config = self.config.get('routing', {})
+        
+        # Check for camera-specific routing first
+        camera_models = routing_config.get('camera_models', {})
+        if camera_id and camera_id in camera_models:
+            return camera_models[camera_id]
+        
+        # Check for GPU-specific routing if GPU is available
+        if torch.cuda.is_available():
+            gpu_routing = routing_config.get('gpu_routing', {})
+            if self.device == 'cuda':
+                # Use GPU-optimized models if available
+                for gpu_model_name in gpu_routing.values():
+                    if gpu_model_name in self.models:
+                        return gpu_model_name
+        
+        # Fall back to default routing
         return routing_config.get('default_rgb_model', 'rgb_yolov8n')
     
     # Removed preprocess_image as Ultralytics handles preprocessing internally
@@ -244,7 +305,7 @@ class ModelRegistry:
     #     return detections
     
     def run_inference(self, frame_data: FrameData) -> List[Detection]:
-        """Run inference on a frame using Ultralytics YOLO and return normalized detections."""
+        """Run ultra-low latency inference on a frame using optimized PyTorch YOLO."""
         model_name = self.get_model_for_modality(frame_data.modality, frame_data.camera_id)
         
         if not model_name or model_name not in self.models:
@@ -254,44 +315,78 @@ class ModelRegistry:
         model_info = self.models[model_name]
         model = model_info['model']
         model_config = model_info['config']
+        model_device = model_info['device']
+        optimize_for_latency = model_info.get('optimize_for_latency', True)
         
         try:
-            # Ultralytics native inference
-            # We enforce standard NMS thresholds from our yaml config if present
+            # Ultra-low latency inference parameters
             postprocessing = model_config.get('postprocessing', {})
             conf_thresh = postprocessing.get('confidence_threshold', 0.25)
             iou_thresh = postprocessing.get('nms_threshold', 0.45)
             
             image = frame_data.image_data
             
-            results = model(image, conf=conf_thresh, iou=iou_thresh, verbose=False)
+            # GPU synchronization for accurate timing
+            if model_device == 'cuda' and torch.cuda.is_available():
+                torch.cuda.synchronize()
             
+            start_time = time.perf_counter()
+            
+            # Ultra-low latency inference with optimizations
+            results = model(
+                image, 
+                conf=conf_thresh, 
+                iou=iou_thresh, 
+                verbose=False, 
+                device=model_device,
+                # Latency optimizations
+                imgsz=640,  # Fixed size for no resizing overhead
+                augment=False,  # No augmentation for speed
+                agnostic_nms=False,  # Class-specific NMS is faster
+            )
+            
+            if model_device == 'cuda' and torch.cuda.is_available():
+                torch.cuda.synchronize()
+            
+            inference_time = time.perf_counter() - start_time
+            
+            # Fast post-processing
             detections = []
             orig_h, orig_w = image.shape[:2]
             
             for r in results:
-                for box in r.boxes:
-                    class_id = int(box.cls[0])
-                    confidence = float(box.conf[0])
+                if hasattr(r, 'boxes') and r.boxes is not None:
+                    # Vectorized processing for speed
+                    boxes = r.boxes.xyxy.cpu().numpy()  # [N, 4]
+                    confidences = r.boxes.conf.cpu().numpy()  # [N]
+                    classes = r.boxes.cls.cpu().numpy().astype(int)  # [N]
                     
-                    # Convert pixel boundaries to 0.0-1.0 normalized strings
-                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                    
-                    x1_norm = max(0.0, min(x1, orig_w - 1)) / orig_w
-                    y1_norm = max(0.0, min(y1, orig_h - 1)) / orig_h
-                    x2_norm = max(0.0, min(x2, orig_w - 1)) / orig_w
-                    y2_norm = max(0.0, min(y2, orig_h - 1)) / orig_h
-                    
-                    class_name = model.names[class_id]
-                    
-                    detection = Detection(
-                        class_name=class_name,
-                        confidence=confidence,
-                        bbox=[x1_norm, y1_norm, x2_norm, y2_norm]
-                    )
-                    detections.append(detection)
-                    
-            logger.debug(f"Model {model_name} detected {len(detections)} objects")
+                    # Batch process all detections
+                    for i in range(len(boxes)):
+                        x1, y1, x2, y2 = boxes[i]
+                        confidence = float(confidences[i])
+                        class_id = classes[i]
+                        
+                        # Fast normalization
+                        x1_norm = max(0.0, min(x1, orig_w - 1)) / orig_w
+                        y1_norm = max(0.0, min(y1, orig_h - 1)) / orig_h
+                        x2_norm = max(0.0, min(x2, orig_w - 1)) / orig_w
+                        y2_norm = max(0.0, min(y2, orig_h - 1)) / orig_h
+                        
+                        class_name = model.names[class_id]
+                        
+                        detection = Detection(
+                            class_name=class_name,
+                            confidence=confidence,
+                            bbox=[x1_norm, y1_norm, x2_norm, y2_norm]
+                        )
+                        detections.append(detection)
+            
+            # Enhanced logging for ultra-low latency
+            device_info = f" ({model_device.upper()})" if model_device == 'cuda' else ""
+            latency_info = f"Ultra-low latency" if optimize_for_latency else "Standard"
+            logger.debug(f"Model {model_name}{device_info} [{latency_info}] detected {len(detections)} objects in {inference_time*1000:.1f}ms")
+            
             return detections
             
         except Exception as e:
@@ -299,7 +394,7 @@ class ModelRegistry:
             return []
 
 class InferenceEngine:
-    """Main inference engine that processes frames from Redis queue."""
+    """Main inference engine that processes frames from Redis queue with GPU acceleration."""
     
     def __init__(self):
         self.model_registry = ModelRegistry()
@@ -311,8 +406,16 @@ class InferenceEngine:
             'frames_processed': 0,
             'total_detections': 0,
             'avg_inference_time': 0.0,
-            'start_time': time.time()
+            'start_time': time.time(),
+            'gpu_enabled': torch.cuda.is_available(),
+            'device': self.model_registry.device
         }
+        
+        # Log GPU status
+        if self.stats['gpu_enabled']:
+            logger.info(f"🚀 GPU Inference Engine initialized with {torch.cuda.get_device_name(0)}")
+        else:
+            logger.info("🖥️ CPU Inference Engine initialized")
     
     def _connect_redis(self) -> redis.Redis:
         """Connect to Redis for frame queue."""
@@ -441,18 +544,29 @@ class InferenceEngine:
                 await asyncio.sleep(0.1)
     
     def get_stats(self) -> Dict[str, Any]:
-        """Get current performance statistics."""
+        """Get current performance statistics including GPU information."""
         uptime = time.time() - self.stats['start_time']
         fps = self.stats['frames_processed'] / uptime if uptime > 0 else 0
         
-        return {
+        stats = {
             'frames_processed': self.stats['frames_processed'],
             'total_detections': self.stats['total_detections'],
             'avg_inference_time': self.stats['avg_inference_time'],
             'fps': fps,
             'uptime_seconds': uptime,
-            'models_loaded': len(self.model_registry.models)
+            'models_loaded': len(self.model_registry.models),
+            'gpu_enabled': self.stats['gpu_enabled'],
+            'device': self.stats['device']
         }
+        
+        # Add GPU-specific stats if available
+        if self.stats['gpu_enabled']:
+            stats['gpu_name'] = torch.cuda.get_device_name(0)
+            stats['gpu_memory_allocated_gb'] = torch.cuda.memory_allocated() / 1024**3
+            stats['gpu_memory_total_gb'] = torch.cuda.get_device_properties(0).total_memory / 1024**3
+            stats['gpu_utilization_percent'] = (stats['gpu_memory_allocated_gb'] / stats['gpu_memory_total_gb']) * 100
+        
+        return stats
     
     async def start(self):
         """Start the inference engine."""

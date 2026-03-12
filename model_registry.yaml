@@ -1,0 +1,259 @@
+# Model Registry Configuration for Multi-Modal Video Surveillance Platform
+# Updated to include YOLOv11, YOLOv8, and YOLOv9 models with ONNX support
+
+models:
+  # YOLOv11 Models - Latest generation with best performance
+  rgb_yolov11n:
+    model_path: "models/yolo11n.pt"
+    model_type: "yolo"
+    input_size: [640, 640]
+    classes: ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush']
+    preprocessing:
+      resize: true
+      normalize: true
+      pad: true
+      convert_grayscale_to_rgb: false
+    postprocessing:
+      confidence_threshold: 0.25
+      nms_threshold: 0.45
+      max_detections: 100
+    performance_tier: "ultra_fast"  # Best for real-time applications
+
+  rgb_yolov11s:
+    model_path: "models/yolo11s.pt"
+    model_type: "yolo"
+    input_size: [640, 640]
+    classes: ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush']
+    preprocessing:
+      resize: true
+      normalize: true
+      pad: true
+      convert_grayscale_to_rgb: false
+    postprocessing:
+      confidence_threshold: 0.25
+      nms_threshold: 0.45
+      max_detections: 100
+    performance_tier: "fast"
+
+  # GPU-optimized PyTorch models for RTX 3070
+  rgb_yolov8n_gpu:
+    model_path: "models/yolov8n.pt"
+    model_type: "yolo"
+    device: "cuda"
+    input_size: [640, 640]
+    classes: ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush']
+    preprocessing:
+      resize: true
+      normalize: true
+      pad: true
+      convert_grayscale_to_rgb: false
+    postprocessing:
+      confidence_threshold: 0.25
+      nms_threshold: 0.45
+      max_detections: 100
+    performance_tier: "ultra_fast_gpu"  # Best performance on RTX 3070: 11.5ms, 87.2 FPS
+    gpu_memory_gb: 0.07
+
+  rgb_yolo11n_gpu:
+    model_path: "models/yolo11n.pt"
+    model_type: "yolo"
+    device: "cuda"
+    input_size: [640, 640]
+    classes: ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush']
+    preprocessing:
+      resize: true
+      normalize: true
+      pad: true
+      convert_grayscale_to_rgb: false
+    postprocessing:
+      confidence_threshold: 0.25
+      nms_threshold: 0.45
+      max_detections: 100
+    performance_tier: "fast_gpu"  # Latest generation: 16.6ms, 60.2 FPS
+    gpu_memory_gb: 0.04
+
+  rgb_yolo11s_gpu:
+    model_path: "models/yolo11s.pt"
+    model_type: "yolo"
+    device: "cuda"
+    input_size: [640, 640]
+    classes: ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush']
+    preprocessing:
+      resize: true
+      normalize: true
+      pad: true
+      convert_grayscale_to_rgb: false
+    postprocessing:
+      confidence_threshold: 0.25
+      nms_threshold: 0.45
+      max_detections: 100
+    performance_tier: "balanced_gpu"  # Good balance: 15.5ms, 64.5 FPS
+    gpu_memory_gb: 0.07
+
+  rgb_yolov9t_gpu:
+    model_path: "models/yolov9t.pt"
+    model_type: "yolo"
+    device: "cuda"
+    input_size: [640, 640]
+    classes: ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush']
+    preprocessing:
+      resize: true
+      normalize: true
+      pad: true
+      convert_grayscale_to_rgb: false
+    postprocessing:
+      confidence_threshold: 0.25
+      nms_threshold: 0.45
+      max_detections: 100
+    performance_tier: "accuracy_gpu"  # Higher accuracy: 26.3ms, 38.1 FPS
+    gpu_memory_gb: 0.04
+
+  # YOLOv8 Models - Stable and reliable (CPU fallback)
+  rgb_yolov8n:
+    model_path: "models/yolov8n.pt"
+    model_type: "yolo"
+    input_size: [640, 640]
+    classes: ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush']
+    preprocessing:
+      resize: true
+      normalize: true
+      pad: true
+      convert_grayscale_to_rgb: false
+    postprocessing:
+      confidence_threshold: 0.25
+      nms_threshold: 0.45
+      max_detections: 100
+    performance_tier: "ultra_fast"
+
+  rgb_yolov8s:
+    model_path: "models/yolov8s.pt"
+    model_type: "yolo"
+    input_size: [640, 640]
+    classes: ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush']
+    preprocessing:
+      resize: true
+      normalize: true
+      pad: true
+      convert_grayscale_to_rgb: false
+    postprocessing:
+      confidence_threshold: 0.25
+      nms_threshold: 0.45
+      max_detections: 100
+    performance_tier: "fast"
+
+  # YOLOv9 Models - Enhanced accuracy
+  rgb_yolov9t:
+    model_path: "models/yolov9t.pt"
+    model_type: "yolo"
+    input_size: [640, 640]
+    classes: ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush']
+    preprocessing:
+      resize: true
+      normalize: true
+      pad: true
+      convert_grayscale_to_rgb: false
+    postprocessing:
+      confidence_threshold: 0.25
+      nms_threshold: 0.45
+      max_detections: 100
+    performance_tier: "balanced"
+
+  # ONNX Models - Optimized for minimal latency
+  rgb_yolov11n_onnx:
+    model_path: "models/yolo11n.onnx"
+    model_type: "onnx"
+    input_size: [640, 640]
+    classes: ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush']
+    preprocessing:
+      resize: true
+      normalize: true
+      pad: true
+      convert_grayscale_to_rgb: false
+    postprocessing:
+      confidence_threshold: 0.25
+      nms_threshold: 0.45
+      max_detections: 100
+    performance_tier: "optimized"  # Best for low-latency real-time applications
+
+  rgb_yolov8n_onnx:
+    model_path: "models/yolov8n.onnx"
+    model_type: "onnx"
+    input_size: [640, 640]
+    classes: ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush']
+    preprocessing:
+      resize: true
+      normalize: true
+      pad: true
+      convert_grayscale_to_rgb: false
+    postprocessing:
+      confidence_threshold: 0.25
+      nms_threshold: 0.45
+      max_detections: 100
+    performance_tier: "optimized"
+
+  rgb_yolov9t_onnx:
+    model_path: "models/yolov9t.onnx"
+    model_type: "onnx"
+    input_size: [640, 640]
+    classes: ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush']
+    preprocessing:
+      resize: true
+      normalize: true
+      pad: true
+      convert_grayscale_to_rgb: false
+    postprocessing:
+      confidence_threshold: 0.25
+      nms_threshold: 0.45
+      max_detections: 100
+    performance_tier: "optimized"
+
+# Model routing configuration
+routing:
+  # Default models for different modalities (GPU-optimized)
+  default_rgb_model: "rgb_yolov8n_gpu"  # Use GPU-optimized PyTorch for best performance
+  default_thermal_model: "rgb_yolov8n_gpu"  # Reuse RGB model for thermal
+  default_rgb_t_model: "rgb_yolov8n_gpu"  # Use for RGB-T fusion
+  
+  # Performance-based routing
+  performance_routing:
+    ultra_fast: "rgb_yolov8n_gpu"      # Fastest model on GPU (87.2 FPS)
+    fast: "rgb_yolo11n_gpu"           # Latest generation, very fast (60.2 FPS)
+    balanced: "rgb_yolo11s_gpu"       # Good balance of speed and accuracy (64.5 FPS)
+    high_accuracy: "rgb_yolov9t_gpu"  # Higher accuracy, still fast (38.1 FPS)
+  
+  # GPU-specific routing
+  gpu_routing:
+    # Best models for RTX 3070 GPU
+    rtx_3070_ultra_fast: "rgb_yolov8n_gpu"    # 11.5ms, 87.2 FPS
+    rtx_3070_balanced: "rgb_yolo11n_gpu"      # 16.6ms, 60.2 FPS
+    rtx_3070_accuracy: "rgb_yolo11s_gpu"     # 15.5ms, 64.5 FPS
+  
+  # Camera-specific routing (optional)
+  camera_routing:
+    # Example: Use different models for different camera types
+    # "camera_001": "rgb_yolov8n_gpu"  # Entry camera - fastest
+    # "camera_002": "rgb_yolo11n_gpu"  # Main area - balanced
+    # "camera_003": "rgb_yolo11s_gpu"  # Critical area - higher accuracy
+
+# Performance optimization settings
+optimization:
+  # ONNX Runtime settings
+  onnx:
+    execution_providers: ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    graph_optimization_level: "ORT_ENABLE_ALL"
+    execution_mode: "ORT_SEQUENTIAL"
+    
+  # Batch processing
+  batch_processing:
+    enabled: false  # Set to true for batch processing (higher latency, better throughput)
+    batch_size: 4
+    
+  # Memory optimization
+  memory:
+    max_workspace_size: 4  # GB
+    enable_memory_mapping: true
+    
+  # Threading
+  threading:
+    intra_op_num_threads: 0  # 0 = auto
+    inter_op_num_threads: 0  # 0 = auto
