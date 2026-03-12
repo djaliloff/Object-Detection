@@ -410,6 +410,7 @@ class InferenceEngine:
         # Frame skipping for smooth streaming
         self.frame_skip = frame_skip
         self.frame_counters = {}  # Track frame count per camera
+        self.parallel_processing_time = 0  # Track parallel processing efficiency
         
         # Performance metrics
         self.stats = {
@@ -470,29 +471,77 @@ class InferenceEngine:
             raise
     
     def _serialize_detections(self, detections: List[Detection], frame_data: FrameData) -> bytes:
-        """Serialize detection results for Redis."""
+        """Serialize detection results optimized for fast frontend rendering with backward compatibility."""
         detection_list = []
         
+        # Pre-calculate frame dimensions for bbox conversion
+        h, w = frame_data.image_data.shape[:2]
+        
         for detection in detections:
+            # Convert normalized bbox to pixel coordinates
+            x1_norm, y1_norm, x2_norm, y2_norm = detection.bbox
+            x1 = int(x1_norm * w)
+            y1 = int(y1_norm * h)
+            x2 = int(x2_norm * w)
+            y2 = int(y2_norm * h)
+            
+            # Optimized detection structure for frontend (backward compatible)
             detection_dict = {
                 'class_name': detection.class_name,
-                'confidence': detection.confidence,
-                'bbox': detection.bbox,
+                'confidence': round(detection.confidence, 2),  # Pre-rounded for display
+                'bbox': [x1_norm, y1_norm, x2_norm, y2_norm],  # Keep normalized (original format)
+                'bbox_pixel': [x1, y1, x2, y2],  # Add pixel coordinates for optimization
+                'center': {
+                    'x': x1 + (x2 - x1) // 2,
+                    'y': y1 + (y2 - y1) // 2
+                },
+                'size': {
+                    'width': x2 - x1,
+                    'height': y2 - y1
+                },
+                'color': self._get_class_color(detection.class_name),  # Pre-calculated color
+                'label': f"{detection.class_name} {detection.confidence:.2f}",  # Pre-formatted
                 'track_id': detection.track_id,
                 'features': detection.features
             }
             detection_list.append(detection_dict)
         
+        # Result structure (backward compatible)
         result = {
             'camera_id': frame_data.camera_id,
             'frame_id': frame_data.frame_id,
             'timestamp': frame_data.timestamp.isoformat(),
             'modality': frame_data.modality,
             'detections': detection_list,
-            'inference_time': time.time()
+            'frame_info': {
+                'width': w,
+                'height': h,
+                'total_detections': len(detection_list)
+            },
+            'inference_time': time.time()  # Original field name
         }
         
         return json.dumps(result).encode('utf-8')
+    
+    def _get_class_color(self, class_name: str) -> str:
+        """Get consistent color for each class."""
+        # Pre-defined colors for consistent rendering
+        color_map = {
+            'person': '#FF6B6B',
+            'car': '#4CAF50',
+            'truck': '#FF9800',
+            'bicycle': '#2196F3',
+            'motorcycle': '#795548',
+            'bus': '#9C27B0',
+            'dog': '#F44336',
+            'cat': '#E91E63',
+            'chair': '#9E9E9E',
+            'bottle': '#00BCD4',
+            'cell phone': '#9C27B0',
+            'laptop': '#607D8B',
+            'tv': '#795548'
+        }
+        return color_map.get(class_name, '#FFEB3B')  # Default yellow
     
     def _update_stats(self, inference_time: float, detection_count: int):
         """Update performance statistics."""
@@ -524,13 +573,13 @@ class InferenceEngine:
         return should_process
     
     async def process_frames(self):
-        """Main processing loop for frames from Redis queue with frame skipping."""
+        """Main processing loop for frames from Redis queue with parallel processing."""
         self.running = True
-        logger.info("Inference engine started")
+        logger.info("Inference engine started with parallel processing")
         
         while self.running:
             try:
-                # Atomically pull all frames and flush the queue to prevent latency buildup
+                # Atomically pull all frames and flush queue to prevent latency buildup
                 pipe = self.redis_client.pipeline()
                 pipe.lrange('frame_queue', 0, -1)
                 pipe.delete('frame_queue')
@@ -549,35 +598,59 @@ class InferenceEngine:
                     except Exception as e:
                         logger.error(f"Error deserializing frame: {e}")
                 
-                for cam_id, frame in latest_frames.items():
-                    # Apply frame skipping for smooth streaming
-                    if not self._should_process_frame(cam_id):
-                        logger.debug(f"Skipped frame from {cam_id} (frame skip: {self.frame_skip})")
-                        continue
+                # Process cameras in PARALLEL to eliminate lag
+                if latest_frames:
+                    parallel_start = time.time()
                     
-                    # Run inference
-                    start_time = time.time()
-                    detections = self.model_registry.run_inference(frame)
-                    inference_time = time.time() - start_time
+                    # Create parallel tasks for all cameras
+                    processing_tasks = []
+                    for cam_id, frame in latest_frames.items():
+                        # Apply frame skipping for smooth streaming
+                        if not self._should_process_frame(cam_id):
+                            logger.debug(f"Skipped frame from {cam_id} (frame skip: {self.frame_skip})")
+                            continue
+                        
+                        # Create async task for parallel processing
+                        task = asyncio.create_task(self._process_single_camera(cam_id, frame))
+                        processing_tasks.append(task)
                     
-                    # Update stats
-                    self._update_stats(inference_time, len(detections))
+                    # Wait for all cameras to complete processing PARALLELLY
+                    if processing_tasks:
+                        await asyncio.gather(*processing_tasks, return_exceptions=True)
                     
-                    # Serialize and publish results
-                    detection_data = self._serialize_detections(detections, frame)
-                    
-                    # Send to detection queue for event processor
-                    self.redis_client.rpush('detection_queue', detection_data)
-                    
-                    # Also publish to WebSocket clients
-                    self.redis_client.publish('surveillance_detections', detection_data)
-                    
-                    logger.debug(f"Processed frame {frame.frame_id} in {inference_time:.3f}s")
+                    # Track parallel processing efficiency
+                    parallel_time = time.time() - parallel_start
+                    self.parallel_processing_time += parallel_time
                     
             except Exception as e:
                 import traceback
                 logger.error(f"Error processing frame: {e}\n{traceback.format_exc()}")
                 await asyncio.sleep(0.1)
+    
+    async def _process_single_camera(self, cam_id: str, frame: FrameData):
+        """Process a single camera frame asynchronously."""
+        try:
+            # Run inference
+            start_time = time.time()
+            detections = self.model_registry.run_inference(frame)
+            inference_time = time.time() - start_time
+            
+            # Update stats
+            self._update_stats(inference_time, len(detections))
+            
+            # Serialize and publish results
+            detection_data = self._serialize_detections(detections, frame)
+            
+            # Send to detection queue for event processor
+            self.redis_client.rpush('detection_queue', detection_data)
+            
+            # Also publish to WebSocket clients
+            self.redis_client.publish('surveillance_detections', detection_data)
+            
+            logger.debug(f"Processed frame {frame.frame_id} from {cam_id} in {inference_time:.3f}s")
+            
+        except Exception as e:
+            logger.error(f"Error processing camera {cam_id}: {e}")
     
     def get_stats(self) -> Dict[str, Any]:
         """Get current performance statistics including GPU information and frame skipping."""
@@ -595,7 +668,8 @@ class InferenceEngine:
             'gpu_enabled': self.stats['gpu_enabled'],
             'device': self.stats['device'],
             'frame_skip': self.stats['frame_skip'],
-            'skip_ratio': self.stats['frames_skipped'] / (self.stats['frames_processed'] + self.stats['frames_skipped']) if (self.stats['frames_processed'] + self.stats['frames_skipped']) > 0 else 0
+            'skip_ratio': self.stats['frames_skipped'] / (self.stats['frames_processed'] + self.stats['frames_skipped']) if (self.stats['frames_processed'] + self.stats['frames_skipped']) > 0 else 0,
+            'parallel_processing_efficiency': self.parallel_processing_time / uptime if uptime > 0 else 0  # Lower is better
         }
         
         # Add GPU-specific stats if available
