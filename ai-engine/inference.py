@@ -394,21 +394,33 @@ class ModelRegistry:
             return []
 
 class InferenceEngine:
-    """Main inference engine that processes frames from Redis queue with GPU acceleration."""
+    """Main inference engine that processes frames from Redis queue with ultra-low latency optimizations."""
     
-    def __init__(self):
+    def __init__(self, frame_skip: int = 2):
+        """
+        Initialize inference engine with frame skipping for smooth streaming.
+        
+        Args:
+            frame_skip: Number of frames to skip between processing (0=no skip, 1=skip 1, etc)
+        """
         self.model_registry = ModelRegistry()
         self.redis_client = self._connect_redis()
         self.running = False
         
+        # Frame skipping for smooth streaming
+        self.frame_skip = frame_skip
+        self.frame_counters = {}  # Track frame count per camera
+        
         # Performance metrics
         self.stats = {
             'frames_processed': 0,
+            'frames_skipped': 0,
             'total_detections': 0,
             'avg_inference_time': 0.0,
             'start_time': time.time(),
             'gpu_enabled': torch.cuda.is_available(),
-            'device': self.model_registry.device
+            'device': self.model_registry.device,
+            'frame_skip': frame_skip
         }
         
         # Log GPU status
@@ -416,6 +428,8 @@ class InferenceEngine:
             logger.info(f"🚀 GPU Inference Engine initialized with {torch.cuda.get_device_name(0)}")
         else:
             logger.info("🖥️ CPU Inference Engine initialized")
+        
+        logger.info(f"Frame skipping enabled: skip {frame_skip} frame(s) for smooth streaming")
     
     def _connect_redis(self) -> redis.Redis:
         """Connect to Redis for frame queue."""
@@ -492,8 +506,25 @@ class InferenceEngine:
             (current_avg * (total_frames - 1) + inference_time) / total_frames
         )
     
+    def _should_process_frame(self, camera_id: str) -> bool:
+        """Determine if frame should be processed based on frame skipping logic."""
+        # Initialize counter for new camera
+        if camera_id not in self.frame_counters:
+            self.frame_counters[camera_id] = 0
+        
+        # Increment counter
+        self.frame_counters[camera_id] += 1
+        
+        # Determine if should process
+        should_process = self.frame_counters[camera_id] % (self.frame_skip + 1) == 0
+        
+        if not should_process:
+            self.stats['frames_skipped'] += 1
+        
+        return should_process
+    
     async def process_frames(self):
-        """Main processing loop for frames from Redis queue."""
+        """Main processing loop for frames from Redis queue with frame skipping."""
         self.running = True
         logger.info("Inference engine started")
         
@@ -519,6 +550,11 @@ class InferenceEngine:
                         logger.error(f"Error deserializing frame: {e}")
                 
                 for cam_id, frame in latest_frames.items():
+                    # Apply frame skipping for smooth streaming
+                    if not self._should_process_frame(cam_id):
+                        logger.debug(f"Skipped frame from {cam_id} (frame skip: {self.frame_skip})")
+                        continue
+                    
                     # Run inference
                     start_time = time.time()
                     detections = self.model_registry.run_inference(frame)
@@ -540,31 +576,33 @@ class InferenceEngine:
                     
             except Exception as e:
                 import traceback
-                logger.error(f"Error processing frame: {e}\\n{traceback.format_exc()}")
+                logger.error(f"Error processing frame: {e}\n{traceback.format_exc()}")
                 await asyncio.sleep(0.1)
     
     def get_stats(self) -> Dict[str, Any]:
-        """Get current performance statistics including GPU information."""
+        """Get current performance statistics including GPU information and frame skipping."""
         uptime = time.time() - self.stats['start_time']
         fps = self.stats['frames_processed'] / uptime if uptime > 0 else 0
         
         stats = {
             'frames_processed': self.stats['frames_processed'],
+            'frames_skipped': self.stats['frames_skipped'],
             'total_detections': self.stats['total_detections'],
             'avg_inference_time': self.stats['avg_inference_time'],
             'fps': fps,
             'uptime_seconds': uptime,
             'models_loaded': len(self.model_registry.models),
             'gpu_enabled': self.stats['gpu_enabled'],
-            'device': self.stats['device']
+            'device': self.stats['device'],
+            'frame_skip': self.stats['frame_skip'],
+            'skip_ratio': self.stats['frames_skipped'] / (self.stats['frames_processed'] + self.stats['frames_skipped']) if (self.stats['frames_processed'] + self.stats['frames_skipped']) > 0 else 0
         }
         
         # Add GPU-specific stats if available
         if self.stats['gpu_enabled']:
-            stats['gpu_name'] = torch.cuda.get_device_name(0)
-            stats['gpu_memory_allocated_gb'] = torch.cuda.memory_allocated() / 1024**3
+            stats['gpu_memory_gb'] = torch.cuda.memory_allocated() / 1024**3
             stats['gpu_memory_total_gb'] = torch.cuda.get_device_properties(0).total_memory / 1024**3
-            stats['gpu_utilization_percent'] = (stats['gpu_memory_allocated_gb'] / stats['gpu_memory_total_gb']) * 100
+            stats['gpu_utilization_percent'] = (stats['gpu_memory_gb'] / stats['gpu_memory_total_gb']) * 100
         
         return stats
     
@@ -578,9 +616,18 @@ class InferenceEngine:
         logger.info("Inference engine stopped")
 
 if __name__ == "__main__":
-    engine = InferenceEngine()
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Ultra-Low Latency AI Inference Engine")
+    parser.add_argument('--frame-skip', type=int, default=1,
+                        help='Number of frames to skip between processing (0=no skip, 1=skip 1, etc)')
+    
+    args = parser.parse_args()
+    
+    engine = InferenceEngine(frame_skip=args.frame_skip)
     
     try:
+        logger.info(f"Starting AI engine with frame skip: {args.frame_skip}")
         asyncio.run(engine.start())
     except KeyboardInterrupt:
         engine.stop()
