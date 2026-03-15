@@ -207,7 +207,7 @@ models:
     model_path: "../models/yolov8n.pt"
     device: "cpu"
     optimize_for_latency: false
-    input_size: [640, 480]
+    input_size: [640, 640]
     classes:
       - person
       - bicycle
@@ -356,6 +356,22 @@ routing:
     # Example:
     # "camera_001": "rgb_yolov8n_ultra_low_latency"  # Entry camera - ultra-fast
     # "camera_002": "rgb_yolov8n_ultra_low_latency"  # Main area - ultra-fast
+
+# ═══════════════════════════════════════════════════════════
+# Multi-Object Tracking (MOT) Configuration
+# ═══════════════════════════════════════════════════════════
+tracking:
+  # Default tracker: 'botsort' (StrongSORT-class with Re-ID) or 'bytetrack' (fast, motion-only)
+  default_tracker: "botsort"
+  
+  # Path to tracker config file (relative to ai-engine/)
+  config_file: "botsort.yaml"
+  
+  # Per-camera tracker override (optional)
+  # Useful for dense/crowded scenes (use botsort) vs simple scenes (use bytetrack)
+  camera_trackers: {}
+    # "camera_001": "botsort"     # Crowded area - use Re-ID
+    # "camera_002": "bytetrack"   # Simple hallway - use motion-only
 
 # Performance settings
 performance:

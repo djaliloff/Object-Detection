@@ -1,4 +1,4 @@
- main
+root
  .\redis\redis-server.exe
 
 camera-gateway

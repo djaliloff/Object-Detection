@@ -23,6 +23,8 @@ from auth import (
     require_admin, require_operator_or_admin, ACCESS_TOKEN_EXPIRE_MINUTES
 )
 
+from contextlib import asynccontextmanager
+
 # Configure structured logging
 logger = structlog.get_logger()
 
@@ -33,13 +35,21 @@ try:
 except Exception as e:
     logger.warning(f"Database connection failed, running without database: {e}")
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Start background task for Redis messages
+    asyncio.create_task(process_redis_messages())
+    yield
+    # Shutdown logic (if any) could go here
+
 # FastAPI app
 app = FastAPI(
     title="Multi-Modal Video Surveillance API",
     description="AI-powered video surveillance platform with RGB/thermal fusion",
     version="1.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    lifespan=lifespan
 )
 
 # CORS middleware
@@ -461,10 +471,7 @@ async def process_redis_messages():
             logger.error(f"Error processing Redis message: {e}")
             await asyncio.sleep(1)
 
-# Start background task
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(process_redis_messages())
+# Background task task already started via lifespan context manager
 
 if __name__ == "__main__":
     import uvicorn

@@ -152,8 +152,8 @@ const VideoPlayer = ({ camera, className = "" }) => {
             />
           )}
 
-          {/* ── BBox Layer ────────────────────────────────────────── */}
-          <BBoxOverlay detections={detections} />
+          {/* ── BBox + MOT Tracking Layer ────────────────────────── */}
+          <BBoxOverlay detections={detections} showTrajectory={true} showVelocity={true} />
         </>
       ) : (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-900/80 backdrop-blur-3xl overflow-hidden">
@@ -192,12 +192,18 @@ const VideoPlayer = ({ camera, className = "" }) => {
              <div className={`w-1.5 h-1.5 rounded-full ${wsStatus === 'connected' ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
              <span className="text-[8px] font-black uppercase tracking-[0.2em]">IA {wsStatus}</span>
           </div>
-          
-          <div className="flex items-center space-x-2 px-3 py-1 rounded-full bg-white/5 backdrop-blur-xl border border-white/10 text-neutral-400">
-             <span className="text-[8px] font-black uppercase tracking-[0.2em]">
-                {detections.length > 0 ? `${detections.length} TRKS` : (isMjpeg ? 'MJPEG' : 'STREAM')}
-             </span>
-          </div>
+                    {detections.length > 0 && (
+             <div className="flex items-center space-x-2 px-3 py-1 rounded-full bg-cyan-500/10 backdrop-blur-xl border border-cyan-500/20 text-cyan-300">
+                <span className="text-[8px] font-black uppercase tracking-[0.2em]">
+                   {detections.filter(d => d.track_id != null && d.track_id >= 0).length} TRACKED
+                </span>
+             </div>
+           )}
+           <div className="flex items-center space-x-2 px-3 py-1 rounded-full bg-white/5 backdrop-blur-xl border border-white/10 text-neutral-400">
+              <span className="text-[8px] font-black uppercase tracking-[0.2em]">
+                 {detections.length > 0 ? `${detections.length} DET` : (isMjpeg ? 'MJPEG' : 'STREAM')}
+              </span>
+           </div>
       </div>
     </div>
   );
