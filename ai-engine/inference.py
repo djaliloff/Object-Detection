@@ -267,6 +267,10 @@ class ModelRegistry:
         camera_models = routing_config.get('camera_models', {})
         if camera_id and camera_id in camera_models:
             return camera_models[camera_id]
+            
+        # Map 'video' modality to standard RGB model
+        if modality == 'video':
+            return routing_config.get('default_rgb_model', 'rgb_yolov8n_ultra_low_latency')
         
         # Check for GPU-specific routing if GPU is available
         if torch.cuda.is_available():
@@ -277,7 +281,7 @@ class ModelRegistry:
                         return gpu_model_name
         
         # Fall back to default routing
-        return routing_config.get('default_rgb_model', 'rgb_yolov8n')
+        return routing_config.get('default_rgb_model', 'rgb_yolov8n_ultra_low_latency')
     
     def run_inference_with_tracking(self, frame_data: FrameData, persist: bool = True) -> Tuple[List[Detection], Any]:
         """
@@ -340,7 +344,7 @@ class ModelRegistry:
                 device=model_device,
                 persist=persist,           # Persist tracks across frames
                 tracker=self.tracker_config_path,  # BoT-SORT or ByteTrack config
-                imgsz=640,
+                imgsz=480,
                 augment=False,
                 agnostic_nms=False,
             )
@@ -588,7 +592,7 @@ class InferenceEngine:
                 } if obj.velocity else None,
                 'age': obj.age,
                 'hits': obj.hits,
-                'trajectory': trajectory_data,
+                'trajectory': [],
                 # ─── Display labels ───
                 'label': f"#{obj.track_id} {obj.class_name} {obj.confidence:.0%}" if obj.track_id else f"{obj.class_name} {obj.confidence:.0%}",
                 'color': get_track_color(obj.track_id) if obj.track_id else get_class_color(obj.class_name),
@@ -619,6 +623,7 @@ class InferenceEngine:
             'inference_time': time.time(),
         }
         
+        logger.info(f"[MOT] {frame_data.camera_id}: {len(detection_list)} objects | {len(active_track_ids)} tracked")
         return json.dumps(result).encode('utf-8')
     
     def _update_stats(self, inference_time: float, detection_count: int, tracked_count: int, camera_id: str):
@@ -644,8 +649,10 @@ class InferenceEngine:
         
         if not should_process:
             self.stats['frames_skipped'] += 1
-        
-        return should_process
+            return False
+            
+        logger.info(f"[DEBUG] Processing frame from camera {camera_id} | MOT: {self.tracker_type}")
+        return True
     
     async def process_frames(self):
         """Main processing loop for frames from Redis queue with MOT tracking."""
@@ -832,7 +839,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AI Inference Engine with Multi-Object Tracking")
     parser.add_argument('--frame-skip', type=int, default=1,
                         help='Number of frames to skip between processing (0=no skip, 1=skip 1, etc)')
-    parser.add_argument('--tracker', type=str, default='botsort', choices=['botsort', 'bytetrack'],
+    parser.add_argument('--tracker', type=str, default='bytetrack', choices=['botsort', 'bytetrack'],
                         help='Tracker type: botsort (StrongSORT-class with Re-ID) or bytetrack (fast, motion-only)')
     
     args = parser.parse_args()
@@ -846,3 +853,8 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         engine.stop()
         logger.info("Inference engine stopped by user")
+    except Exception as e:
+        import traceback
+        logger.error(f"FATAL: AI Engine crashed at startup: {e}\n{traceback.format_exc()}")
+        engine.stop()
+        sys.exit(1)

@@ -1,0 +1,3 @@
+import video for rgb , thermic
+search bar
+event send notfication , email when a object(person, car ) pass  restrected zone 

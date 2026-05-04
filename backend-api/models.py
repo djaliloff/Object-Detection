@@ -37,11 +37,24 @@ class Camera(Base):
     ip = Column(String(45), nullable=False)
     port = Column(Integer, default=554)
     rtsp_url = Column(String(500), nullable=False)
+    hls_url = Column(String(500))
+    webrtc_url = Column(String(500))
+    mjpeg_url = Column(String(500))
+    stream_url = Column(String(500))
     credentials = Column(JSONB)  # Encrypted credentials
     modality = Column(String(20), nullable=False, default="rgb")  # rgb, thermal, rgb_t
     group_id = Column(UUID(as_uuid=True), ForeignKey("camera_groups.id"))
+    location = Column(String(200))
+    resolution = Column(String(20), default="1920x1080")
+    fps = Column(Integer, default=30)
+    is_active = Column(Boolean, default=True)
+    is_recording = Column(Boolean, default=False)
+    detection_enabled = Column(Boolean, default=True)
+    ptz_enabled = Column(Boolean, default=False)
+    thermal_min = Column(Float, default=20.0)
+    thermal_max = Column(Float, default=45.0)
     config_json = Column(JSONB)
-    status = Column(String(20), default="offline")  # online, offline, error
+    status = Column(String(20), default="online")  # online, offline, error
     last_seen = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -124,6 +137,7 @@ class Zone(Base):
     name = Column(String(100), nullable=False)
     polygon = Column(JSONB)  # For polygon zones: [[x1, y1], [x2, y2], ...]
     zone_type = Column(String(20), nullable=False)  # exclusion, counting, alert
+    is_active = Column(Boolean, default=True)
     config_json = Column(JSONB)  # Zone-specific config
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

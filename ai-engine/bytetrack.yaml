@@ -6,3 +6,8 @@ track_low_thresh: 0.1
 new_track_thresh: 0.6
 track_buffer: 30
 match_thresh: 0.8
+fuse_score: true
+# Global Motion Compensation (GMC) - disabled for performance
+gmc_method: None
+proximity_thresh: 0.5
+appearance_thresh: 0.25

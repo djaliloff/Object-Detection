@@ -15,6 +15,7 @@ class CameraModality(str, Enum):
     RGB_T = "rgb_t"
     MJPEG = "mjpeg"
     FUSED = "fused"
+    VIDEO = "video"
 
 class CameraStatus(str, Enum):
     ONLINE = "online"
@@ -74,11 +75,25 @@ class CameraBase(BaseModel):
     ip: str = Field(..., pattern=r'^(\d{1,3}\.){3}\d{1,3}$')
     port: int = Field(default=554, ge=1, le=65535)
     rtsp_url: str = Field(..., min_length=1)
+    hls_url: Optional[str] = None
+    webrtc_url: Optional[str] = None
+    mjpeg_url: Optional[str] = None
+    stream_url: Optional[str] = None
     modality: CameraModality = CameraModality.RGB
     group_id: Optional[UUID] = None
+    location: Optional[str] = None
+    resolution: str = "1920x1080"
+    fps: int = 30
+    is_active: bool = True
+    is_recording: bool = False
+    detection_enabled: bool = True
+    ptz_enabled: bool = False
+    thermal_min: float = 20.0
+    thermal_max: float = 45.0
     config_json: Optional[Dict[str, Any]] = None
 
 class CameraCreate(CameraBase):
+    status: CameraStatus = CameraStatus.ONLINE
     credentials: Optional[Dict[str, str]] = None
 
 class CameraUpdate(BaseModel):
@@ -86,8 +101,22 @@ class CameraUpdate(BaseModel):
     ip: Optional[str] = Field(None, pattern=r'^(\d{1,3}\.){3}\d{1,3}$')
     port: Optional[int] = Field(None, ge=1, le=65535)
     rtsp_url: Optional[str] = Field(None, min_length=1)
+    hls_url: Optional[str] = None
+    webrtc_url: Optional[str] = None
+    mjpeg_url: Optional[str] = None
+    stream_url: Optional[str] = None
     modality: Optional[CameraModality] = None
     group_id: Optional[UUID] = None
+    location: Optional[str] = None
+    resolution: Optional[str] = None
+    fps: Optional[int] = None
+    is_active: Optional[bool] = None
+    is_recording: Optional[bool] = None
+    detection_enabled: Optional[bool] = None
+    ptz_enabled: Optional[bool] = None
+    thermal_min: Optional[float] = None
+    thermal_max: Optional[float] = None
+    status: Optional[CameraStatus] = None
     config_json: Optional[Dict[str, Any]] = None
     credentials: Optional[Dict[str, str]] = None
 
@@ -187,12 +216,20 @@ class Event(EventBase):
 class ZoneBase(BaseModel):
     camera_id: UUID
     name: str = Field(..., min_length=1, max_length=100)
-    polygon: List[List[float]]  # [[x1, y1], [x2, y2], ...]
+    polygon: Optional[List[List[float]]] = None  # [[x1, y1], [x2, y2], ...]
     zone_type: ZoneType
+    is_active: bool = True
     config_json: Optional[Dict[str, Any]] = None
 
 class ZoneCreate(ZoneBase):
     pass
+
+class ZoneUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    polygon: Optional[List[List[float]]] = None
+    zone_type: Optional[ZoneType] = None
+    is_active: Optional[bool] = None
+    config_json: Optional[Dict[str, Any]] = None
 
 class Zone(ZoneBase):
     id: UUID

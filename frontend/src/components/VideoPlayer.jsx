@@ -4,17 +4,15 @@ import BBoxOverlay from './BBoxOverlay.jsx';
 import { useAuthStore } from '../stores/authStore';
 
 /* ── Stream Type Detection ─────────────────────────────────── */
-function isMjpegUrl(url = '') {
+const isMjpegUrl = (url = '') => {
   if (!url) return false;
   const u = url.toLowerCase();
-  return (
-    u.includes('/video') ||
-    u.includes('/mjpeg') ||
-    u.includes('/stream') ||
-    u.includes('/videofeed') ||
-    u.match(/:\d{4,5}\/?$/)
-  ) || u.startsWith('http');
-}
+  // If it's a known video/streaming extension, it's NOT MJPEG
+  if (u.endsWith('.mp4') || u.endsWith('.mkv') || u.endsWith('.avi') || u.endsWith('.webm') || u.endsWith('.m3u8')) {
+    return false;
+  }
+  return u.includes('/video') || u.includes('/mjpeg') || u.includes('/stream') || u.includes('/videofeed') || u.match(/:\d{4,5}\/?$/) || (u.startsWith('http') && !u.includes('.mp4'));
+};
 
 function snapshotUrl(streamUrl = '') {
   if (!streamUrl) return '';
@@ -25,16 +23,66 @@ function snapshotUrl(streamUrl = '') {
 /* ── WebSocket Base URL ────────────────────────────────────── */
 const WS_BASE = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:8000/ws/live`;
 
-const VideoPlayer = ({ camera, className = "" }) => {
+const VideoPlayer = ({ camera, showAI = true, className = "" }) => {
   const { token } = useAuthStore();
   const [detections, setDetections] = useState([]);
   const [wsStatus, setWsStatus] = useState('connecting');
   const [imgError, setImgError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-
+  const [videoRect, setVideoRect] = useState({ top: 0, left: 0, width: '100%', height: '100%' });
   const wsRef = useRef(null);
   const reconnectRef = useRef(null);
   const mountedRef = useRef(true);
+  const containerRef = useRef(null);
+  const mediaRef = useRef(null);
+
+  /* ── Coordinate Alignment Logic ────────────────────────────── */
+  const updateVideoRect = useCallback(() => {
+    if (!mediaRef.current || !containerRef.current) return;
+    
+    const container = containerRef.current.getBoundingClientRect();
+    const media = mediaRef.current;
+    
+    let intrinsicWidth, intrinsicHeight;
+    if (media.tagName === 'IMG') {
+      intrinsicWidth = media.naturalWidth;
+      intrinsicHeight = media.naturalHeight;
+    } else {
+      intrinsicWidth = media.videoWidth;
+      intrinsicHeight = media.videoHeight;
+    }
+    
+    if (!intrinsicWidth || !intrinsicHeight) return;
+    
+    const containerRatio = container.width / container.height;
+    const mediaRatio = intrinsicWidth / intrinsicHeight;
+    
+    let w, h, t, l;
+    if (containerRatio > mediaRatio) {
+      h = container.height;
+      w = h * mediaRatio;
+      t = 0;
+      l = (container.width - w) / 2;
+    } else {
+      w = container.width;
+      h = w / mediaRatio;
+      l = 0;
+      t = (container.height - h) / 2;
+    }
+    
+    setVideoRect({ 
+      top: `${(t / container.height) * 100}%`, 
+      left: `${(l / container.width) * 100}%`, 
+      width: `${(w / container.width) * 100}%`, 
+      height: `${(h / container.height) * 100}%` 
+    });
+  }, []);
+
+  useEffect(() => {
+    const observer = new ResizeObserver(updateVideoRect);
+    if (containerRef.current) observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, [updateVideoRect]);
 
   const cameraId = camera?.id;
   const cameraStatus = camera?.status;
@@ -59,6 +107,7 @@ const VideoPlayer = ({ camera, className = "" }) => {
         try {
           const msg = JSON.parse(evt.data);
           if (msg.type === 'detection' && msg.camera_id === cameraId) {
+            console.debug(`[LiveFeed] Detections received for ${cameraId}:`, msg.detections?.length);
             setDetections(msg.detections ?? []);
           }
         } catch (e) { /* ignore */ }
@@ -98,14 +147,43 @@ const VideoPlayer = ({ camera, className = "" }) => {
     || camera?.config?.mjpeg_url
     || camera?.rtsp_url 
     || '';
-  const isMjpeg = useMemo(() => isMjpegUrl(streamUrl), [streamUrl]);
+
+  const resolvedStreamUrl = useMemo(() => {
+    if (!streamUrl) return '';
+    
+    // Handle relative uploads path
+    if (streamUrl.startsWith('/uploads')) {
+      const protocol = window.location.protocol;
+      const hostname = window.location.hostname;
+      return encodeURI(`${protocol}//${hostname}:8000${streamUrl}`);
+    }
+
+    // Handle absolute file paths that point to the uploads directory
+    if (streamUrl.includes('uploads/tactical_archives') || streamUrl.includes('uploads\\tactical_archives')) {
+      const parts = streamUrl.split(/[/\\]uploads[/\\]/);
+      if (parts.length > 1) {
+        const relativePath = `/uploads/${parts[1].replace(/\\/g, '/')}`;
+        const protocol = window.location.protocol;
+        const hostname = window.location.hostname;
+        return encodeURI(`${protocol}//${hostname}:8000${relativePath}`);
+      }
+    }
+    
+    return streamUrl;
+  }, [streamUrl]);
+
+  const isMjpeg = useMemo(() => isMjpegUrl(resolvedStreamUrl), [resolvedStreamUrl]);
 
   if (!cameraId) return null;
 
   const isOnline = cameraStatus === 'online';
 
   return (
-    <div className={`relative w-full h-full bg-black overflow-hidden select-none ${className}`} id={`camera-player-${cameraId}`}>
+    <div 
+      ref={containerRef}
+      className={`relative w-full h-full bg-black overflow-hidden select-none ${className}`} 
+      id={`camera-player-${cameraId}`}
+    >
       
       {/* ── Video Stream ─────────────────────────────────────────── */}
       {isOnline ? (
@@ -127,10 +205,14 @@ const VideoPlayer = ({ camera, className = "" }) => {
               </div>
             ) : (
               <img
-                src={streamUrl}
+                ref={mediaRef}
+                src={resolvedStreamUrl}
                 alt={`Flux ${cameraName}`}
-                className="w-full h-full object-cover"
-                onLoad={() => setIsLoading(false)}
+                className="w-full h-full object-contain"
+                onLoad={() => {
+                  setIsLoading(false);
+                  updateVideoRect();
+                }}
                 onError={(e) => {
                   console.error('Stream load error:', streamUrl);
                   setImgError(true);
@@ -140,10 +222,15 @@ const VideoPlayer = ({ camera, className = "" }) => {
             )
           ) : (
             <video
-              src={streamUrl}
+              ref={mediaRef}
+              src={resolvedStreamUrl}
               autoPlay muted playsInline
-              className="w-full h-full object-cover"
-              onPlaying={() => setIsLoading(false)}
+              className="w-full h-full object-contain"
+              onPlaying={() => {
+                setIsLoading(false);
+                updateVideoRect();
+              }}
+              onLoadedMetadata={updateVideoRect}
               onError={(e) => {
                 setImgError(true);
                 setIsLoading(false);
@@ -153,7 +240,11 @@ const VideoPlayer = ({ camera, className = "" }) => {
           )}
 
           {/* ── BBox + MOT Tracking Layer ────────────────────────── */}
-          <BBoxOverlay detections={detections} showTrajectory={true} showVelocity={true} />
+          {showAI && (
+            <div className="absolute pointer-events-none z-20" style={videoRect}>
+              <BBoxOverlay detections={detections} showTrajectory={false} showVelocity={false} />
+            </div>
+          )}
         </>
       ) : (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-900/80 backdrop-blur-3xl overflow-hidden">

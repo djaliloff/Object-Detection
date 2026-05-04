@@ -31,8 +31,11 @@ class CameraConfig:
     username: Optional[str] = None
     password: Optional[str] = None
     modality: str = "rgb"  # rgb, thermal, rgb_t
-    fps_target: int = 15
+    fps_target: int = 30
     enabled: bool = True
+    mjpeg_url: Optional[str] = None
+    hls_url: Optional[str] = None
+    stream_url: Optional[str] = None
 
 @dataclass
 class FrameMetadata:
@@ -93,34 +96,38 @@ class RTSPCameraAdapter(CameraAdapter):
             
             # Bypass GStreamer pipeline entirely for direct HTTP streams (like IP Webcam)
             if rtsp_url.startswith('http'):
+                logger.info(f"Opening HTTP/MJPEG stream for camera {self.config.id}: {rtsp_url}")
                 self.cap = cv2.VideoCapture(rtsp_url)
+                # Set timeout for HTTP streams if supported by OpenCV version
+                self.cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
             else:
                 try:
-                    # Try GStreamer pipeline first
-                    pipeline = f"rtspsrc location={rtsp_url} ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! appsink"
+                    # Try GStreamer pipeline first for RTSP
+                    logger.info(f"Attempting GStreamer for RTSP camera {self.config.id}")
+                    pipeline = f"rtspsrc location={rtsp_url} latency=100 ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! appsink"
                     self.cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
                     
                     if not self.cap.isOpened():
-                        # Explicitly fallback since failed captures don't throw Python errors
+                        logger.info(f"GStreamer failed, falling back to FFmpeg/Direct for camera {self.config.id}")
                         self.cap = cv2.VideoCapture(rtsp_url)
-                except:
-                    # Fallback to standard OpenCV
+                except Exception as e:
+                    logger.warning(f"GStreamer initialization error: {e}, falling back to standard OpenCV")
                     self.cap = cv2.VideoCapture(rtsp_url)
             
             if not self.cap.isOpened():
-                logger.error(f"Failed to open RTSP stream for camera {self.config.id}")
+                logger.error(f"[ERROR] Failed to open stream for camera {self.config.id}")
                 return False
             
             # Test read a frame
             ret, frame = self.cap.read()
             if not ret or frame is None:
-                logger.error(f"Failed to read frame from camera {self.config.id}")
+                logger.error(f"[ERROR] Connected but failed to read initial frame from camera {self.config.id}")
                 self.cap.release()
                 self.cap = None
                 return False
             
             self.connection_attempts = 0
-            logger.info(f"Connected to RTSP camera {self.config.id}")
+            logger.info(f"[SUCCESS] Successfully connected and validated camera {self.config.id}")
             return True
             
         except Exception as e:
@@ -223,6 +230,76 @@ class ThermalCameraAdapter(CameraAdapter):
         """Check if thermal camera is connected."""
         return True  # Placeholder
 
+class VideoFileCameraAdapter(CameraAdapter):
+    """Camera adapter for looped video files."""
+    
+    def __init__(self, config: CameraConfig):
+        self.config = config
+        self.cap = None
+        self.frame_count = 0
+        self.last_frame_time = time.time()
+    
+    async def connect(self) -> bool:
+        """Open video file."""
+        try:
+            video_path = self.config.rtsp_url
+            if not os.path.exists(video_path):
+                logger.error(f"Video file not found for camera {self.config.id}: {video_path}")
+                return False
+                
+            self.cap = cv2.VideoCapture(video_path)
+            if not self.cap.isOpened():
+                logger.error(f"Failed to open video file for camera {self.config.id}")
+                return False
+                
+            logger.info(f"Successfully opened video file for camera {self.config.id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error opening video file {self.config.id}: {e}")
+            return False
+            
+    async def disconnect(self):
+        """Close video file."""
+        if self.cap:
+            self.cap.release()
+            self.cap = None
+            
+    async def get_frame(self) -> tuple[Optional[np.ndarray], Optional[FrameMetadata]]:
+        """Get a frame from video file with looping."""
+        if not self.cap or not self.cap.isOpened():
+            return None, None
+            
+        try:
+            ret, frame = self.cap.read()
+            
+            # Loop the video if we reach the end
+            if not ret or frame is None:
+                self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                ret, frame = self.cap.read()
+                if not ret or frame is None:
+                    return None, None
+            
+            self.frame_count += 1
+            current_time = time.time()
+            
+            metadata = FrameMetadata(
+                camera_id=self.config.id,
+                frame_id=f"{self.config.id}_{int(current_time * 1000)}_{self.frame_count}",
+                timestamp=datetime.now(),
+                modality=self.config.modality,
+                resolution=frame.shape[:2],
+                frame_number=self.frame_count,
+                metadata={'looping': True}
+            )
+            
+            return frame, metadata
+        except Exception as e:
+            logger.error(f"Error reading video frame {self.config.id}: {e}")
+            return None, None
+            
+    def is_connected(self) -> bool:
+        return self.cap is not None and self.cap.isOpened()
+
 class CameraManager:
     """Manages multiple camera connections and frame capture."""
     
@@ -261,6 +338,8 @@ class CameraManager:
         # Create appropriate adapter based on modality
         if config.modality == "thermal":
             adapter = ThermalCameraAdapter(config)
+        elif config.modality == "video":
+            adapter = VideoFileCameraAdapter(config)
         else:
             adapter = RTSPCameraAdapter(config)
         
@@ -531,7 +610,11 @@ if __name__ == "__main__":
                 username=None,
                 password=None,
                 modality=c.modality,
-                fps_target=10  # Reduced to prevent queue flooding
+                fps_target=c.fps or 15,
+                enabled=c.is_active if c.is_active is not None else True,
+                mjpeg_url=c.mjpeg_url,
+                hls_url=c.hls_url,
+                stream_url=c.stream_url
             )
             gateway.camera_manager.add_camera(config)
             logger.info(f"Loaded database camera: {config.name} at {config.rtsp_url}")
@@ -545,3 +628,8 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         gateway.stop()
         logger.info("Camera gateway stopped by user")
+    except Exception as e:
+        import traceback
+        logger.error(f"FATAL: Camera Gateway crashed: {e}\n{traceback.format_exc()}")
+        gateway.stop()
+        sys.exit(1)

@@ -50,6 +50,7 @@ const Login = () => {
           name="username"
           type="text"
           required
+          autoComplete="username"
           value={formData.username}
           onChange={handleChange}
           className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
@@ -66,6 +67,7 @@ const Login = () => {
           name="password"
           type="password"
           required
+          autoComplete="current-password"
           value={formData.password}
           onChange={handleChange}
           className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"

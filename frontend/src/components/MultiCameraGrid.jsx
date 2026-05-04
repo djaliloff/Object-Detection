@@ -6,7 +6,7 @@ import CameraCard from './CameraCard.jsx';
  * MultiCameraGrid.jsx — Dynamic surveillance matrix
  * Supports 1x1, 2x2, 3x3, 4x4 layouts with fluid animations
  */
-const MultiCameraGrid = ({ cameras = [], onCameraSelect, onMaximize, selectedCameraId, gridLayout: externalGridLayout }) => {
+const MultiCameraGrid = ({ cameras = [], onCameraSelect, onMaximize, onOpenZoneManager, selectedCameraId, gridLayout: externalGridLayout }) => {
   const [internalGridLayout, setInternalGridLayout] = useState('2x2');
   
   const gridLayout = externalGridLayout || internalGridLayout;
@@ -51,6 +51,7 @@ const MultiCameraGrid = ({ cameras = [], onCameraSelect, onMaximize, selectedCam
         <CameraCard 
           camera={camera} 
           onMaximize={(cam) => onMaximize?.(cam)}
+          onOpenZoneManager={(cam) => onOpenZoneManager?.(cam)}
         />
         
         {/* Selection Glow */}

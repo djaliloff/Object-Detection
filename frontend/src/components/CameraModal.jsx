@@ -4,14 +4,10 @@ import {
   X, 
   Save, 
   Camera, 
-  Shield, 
-  Activity, 
   Wifi, 
-  Monitor,
   Zap,
-  Bot,
-  Settings,
-  Link as LinkIcon
+  Link as LinkIcon,
+  RefreshCw
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { camerasAPI } from '../utils/api';
@@ -43,6 +39,8 @@ const CameraModal = ({ isOpen, onClose, camera = null }) => {
   });
 
   const [activeTab, setActiveTab] = useState('basic');
+  const [sourceType, setSourceType] = useState(camera?.modality === 'video' ? 'video' : 'live');
+  const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
     if (camera) {
@@ -52,6 +50,7 @@ const CameraModal = ({ isOpen, onClose, camera = null }) => {
         resolution: camera.resolution || '1920x1080',
         fps: camera.fps || 30
       });
+      setSourceType(camera.modality === 'video' ? 'video' : 'live');
     } else {
       setFormData({
         name: '',
@@ -74,6 +73,7 @@ const CameraModal = ({ isOpen, onClose, camera = null }) => {
         thermal_min: 20,
         thermal_max: 45
       });
+      setSourceType('live');
     }
   }, [camera, isOpen]);
 
@@ -101,6 +101,29 @@ const CameraModal = ({ isOpen, onClose, camera = null }) => {
       ...prev,
       [name]: type === 'checkbox' ? checked : (type === 'number' ? Number(value) : value)
     }));
+  };
+
+  const handleVideoUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    const loadingToast = toast.loading('Uploading tactical archive...');
+    try {
+      const response = await camerasAPI.uploadVideo(file);
+      setFormData(prev => ({
+        ...prev,
+        rtsp_url: response.file_path,
+        stream_url: response.web_url,
+        modality: 'video',
+        ip: '0.0.0.0' // Placeholder for video files
+      }));
+      toast.success('Archive successfully staged', { id: loadingToast });
+    } catch (err) {
+      toast.error('Upload sequence failed', { id: loadingToast });
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const handleSubmit = (e) => {
@@ -146,11 +169,28 @@ const CameraModal = ({ isOpen, onClose, camera = null }) => {
           </button>
         </header>
 
+        <div className="px-8 pt-6">
+          <div className="flex bg-neutral-900 rounded-2xl p-1 w-fit border border-white/5">
+            <button 
+              type="button"
+              onClick={() => setSourceType('live')}
+              className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${sourceType === 'live' ? 'bg-blue-600 text-white shadow-lg' : 'text-neutral-500 hover:text-white'}`}
+            >
+              Real-time Stream
+            </button>
+            <button 
+              type="button"
+              onClick={() => setSourceType('video')}
+              className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${sourceType === 'video' ? 'bg-blue-600 text-white shadow-lg' : 'text-neutral-500 hover:text-white'}`}
+            >
+              Video Archive
+            </button>
+          </div>
+        </div>
+
         <nav className="flex px-4 border-b border-white/5">
           <TabButton id="basic" label="Transmission" icon={Wifi} />
           <TabButton id="streams" label="Protocols" icon={LinkIcon} />
-          <TabButton id="analytics" label="Neural Ops" icon={Bot} />
-          <TabButton id="advanced" label="System" icon={Settings} />
         </nav>
 
         <form onSubmit={handleSubmit} className="p-8">
@@ -169,17 +209,63 @@ const CameraModal = ({ isOpen, onClose, camera = null }) => {
                       onChange={handleChange}
                     />
                   </div>
-                  <div className="group">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-neutral-600 block mb-2 group-focus-within:text-blue-500 transition-colors">Target IP</label>
-                    <input
-                      name="ip"
-                      required
-                      className="w-full bg-neutral-800/50 border border-white/5 rounded-2xl py-4 px-5 outline-none focus:ring-2 ring-blue-500/50 text-white font-bold transition-all placeholder:text-neutral-700"
-                      placeholder="192.168.1.100"
-                      value={formData.ip}
-                      onChange={handleChange}
-                    />
-                  </div>
+                  
+                  {sourceType === 'live' ? (
+                    <div className="group">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-neutral-600 block mb-2 group-focus-within:text-blue-500 transition-colors">Target IP</label>
+                      <input
+                        name="ip"
+                        required
+                        className="w-full bg-neutral-800/50 border border-white/5 rounded-2xl py-4 px-5 outline-none focus:ring-2 ring-blue-500/50 text-white font-bold transition-all placeholder:text-neutral-700"
+                        placeholder="192.168.1.100"
+                        value={formData.ip}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const ipMatch = val.match(/(\d{1,3}\.){3}\d{1,3}/);
+                          if (ipMatch && val.includes('://')) {
+                            setFormData(prev => ({
+                              ...prev,
+                              ip: ipMatch[0],
+                              mjpeg_url: val.includes(':8080') ? val : prev.mjpeg_url,
+                              rtsp_url: val.includes(':8080') ? `rtsp://${ipMatch[0]}:8080/h264_pcm.sdp` : prev.rtsp_url
+                            }));
+                            toast.success(`Smart extracted IP: ${ipMatch[0]}`, { icon: '🤖' });
+                          } else {
+                            handleChange(e);
+                          }
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <div className="group">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-neutral-600 block mb-2 group-focus-within:text-blue-500 transition-colors">Tactical Archive (Video)</label>
+                      <div className="relative">
+                        <input
+                          type="file"
+                          accept="video/*"
+                          onChange={handleVideoUpload}
+                          disabled={isUploading}
+                          className="hidden"
+                          id="video-upload"
+                        />
+                        <label 
+                          htmlFor="video-upload"
+                          className="w-full flex items-center justify-center space-x-3 bg-blue-600/10 border border-blue-500/20 border-dashed rounded-2xl py-8 cursor-pointer hover:bg-blue-600/20 transition-all group/upload"
+                        >
+                          <div className={`p-3 bg-blue-600 rounded-xl shadow-lg ${isUploading ? 'animate-pulse' : 'group-hover/upload:scale-110'} transition-transform`}>
+                            {isUploading ? <RefreshCw className="w-5 h-5 text-white animate-spin" /> : <Save className="w-5 h-5 text-white" />}
+                          </div>
+                          <div className="text-left">
+                            <p className="text-[10px] font-black text-white uppercase tracking-widest">{isUploading ? 'Uploading Archive...' : 'Select Video File'}</p>
+                            <p className="text-[8px] font-bold text-blue-400/60 uppercase">{formData.rtsp_url ? 'File Staged' : 'MP4, MKV, AVI supported'}</p>
+                          </div>
+                        </label>
+                      </div>
+                      {formData.rtsp_url && (
+                        <p className="mt-2 text-[8px] font-mono text-neutral-500 truncate">{formData.rtsp_url}</p>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className="space-y-6">
                   <div className="group">
@@ -189,11 +275,13 @@ const CameraModal = ({ isOpen, onClose, camera = null }) => {
                       className="w-full bg-neutral-800/50 border border-white/5 rounded-2xl py-4 px-5 outline-none focus:ring-2 ring-blue-500/50 text-white font-bold transition-all appearance-none cursor-pointer"
                       value={formData.modality}
                       onChange={handleChange}
+                      disabled={sourceType === 'video'}
                     >
                       <option value="rgb">RGB (Standard Visual)</option>
                       <option value="thermal">Thermal (Heat Signature)</option>
                       <option value="fused">Fused (Multispectral)</option>
                       <option value="mjpeg">MJPEG (Network Stream)</option>
+                      <option value="video">VIDEO (Archive Replay)</option>
                     </select>
                   </div>
                   <div className="group">
@@ -205,6 +293,29 @@ const CameraModal = ({ isOpen, onClose, camera = null }) => {
                       value={formData.location}
                       onChange={handleChange}
                     />
+                  </div>
+                  
+                  {/* AI Detection Toggle */}
+                  <div className="flex items-center justify-between p-4 bg-blue-600/5 rounded-2xl border border-blue-500/10">
+                    <div className="flex items-center space-x-3">
+                      <div className={`p-2 rounded-lg ${formData.detection_enabled ? 'bg-blue-600 text-white' : 'bg-neutral-800 text-neutral-500'}`}>
+                        <Zap className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black text-white uppercase tracking-widest">AI Detection (YOLO)</p>
+                        <p className="text-[8px] font-bold text-neutral-500 uppercase">Real-time object analysis</p>
+                      </div>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        name="detection_enabled"
+                        className="sr-only peer" 
+                        checked={formData.detection_enabled}
+                        onChange={handleChange}
+                      />
+                      <div className="w-11 h-6 bg-neutral-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    </label>
                   </div>
                 </div>
               </div>
@@ -249,127 +360,6 @@ const CameraModal = ({ isOpen, onClose, camera = null }) => {
                       onChange={handleChange}
                     />
                   </div>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'analytics' && (
-              <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
-                <div className="grid grid-cols-2 gap-6">
-                  <label className="flex items-center justify-between p-6 bg-white/5 border border-white/10 rounded-[32px] cursor-pointer hover:bg-white/[0.08] transition-all group">
-                    <div className="flex items-center space-x-4">
-                      <div className="p-3 bg-indigo-500/20 text-indigo-400 rounded-2xl group-hover:scale-110 transition-transform">
-                        <Bot className="w-6 h-6" />
-                      </div>
-                      <div>
-                        <p className="text-white font-bold uppercase tracking-tight">Object Detection</p>
-                        <p className="text-neutral-600 text-[10px] font-black uppercase">TensorCore Analysis</p>
-                      </div>
-                    </div>
-                    <input 
-                      type="checkbox" 
-                      name="detection_enabled" 
-                      checked={formData.detection_enabled} 
-                      onChange={handleChange}
-                      className="w-6 h-6 accent-blue-600 bg-neutral-800 border-white/5 rounded-lg" 
-                    />
-                  </label>
-
-                  <label className="flex items-center justify-between p-6 bg-white/5 border border-white/10 rounded-[32px] cursor-pointer hover:bg-white/[0.08] transition-all group">
-                    <div className="flex items-center space-x-4">
-                      <div className="p-3 bg-red-500/20 text-red-400 rounded-2xl group-hover:scale-110 transition-transform">
-                        <Shield className="w-6 h-6" />
-                      </div>
-                      <div>
-                        <p className="text-white font-bold uppercase tracking-tight">Active Sentinel</p>
-                        <p className="text-neutral-600 text-[10px] font-black uppercase">Real-time alerts</p>
-                      </div>
-                    </div>
-                    <input 
-                      type="checkbox" 
-                      name="is_active" 
-                      checked={formData.is_active} 
-                      onChange={handleChange}
-                      className="w-6 h-6 accent-blue-600 bg-neutral-800 border-white/5 rounded-lg" 
-                    />
-                  </label>
-                </div>
-
-                <div className="p-8 bg-neutral-900 border border-white/5 rounded-[40px]">
-                   <label className="text-[10px] font-black uppercase tracking-widest text-neutral-600 block mb-6">Object Confidence Threshold</label>
-                   <div className="flex items-center space-x-6">
-                      <input type="range" className="flex-1 accent-blue-600 h-1.5" />
-                      <span className="text-2xl font-black text-blue-500 font-mono">85%</span>
-                   </div>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'advanced' && (
-              <div className="grid grid-cols-2 gap-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
-                <div className="space-y-6">
-                  <div className="group">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-neutral-600 block mb-2 group-focus-within:text-blue-500 transition-colors">Target Resolution</label>
-                    <select
-                      name="resolution"
-                      className="w-full bg-neutral-800/50 border border-white/5 rounded-2xl py-4 px-5 outline-none focus:ring-2 ring-blue-500/50 text-white font-bold transition-all appearance-none"
-                      value={formData.resolution}
-                      onChange={handleChange}
-                    >
-                      <option value="3840x2160">4K UHD (2160p)</option>
-                      <option value="1920x1080">Full HD (1080p)</option>
-                      <option value="1280x720">HD (720p)</option>
-                      <option value="640x480">VGA (Thermal)</option>
-                    </select>
-                  </div>
-                   <div className="group">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-neutral-600 block mb-2 group-focus-within:text-blue-500 transition-colors">Frame Frequency</label>
-                    <input
-                      type="number"
-                      name="fps"
-                      className="w-full bg-neutral-800/50 border border-white/5 rounded-2xl py-4 px-5 outline-none focus:ring-2 ring-blue-500/50 text-white font-bold transition-all"
-                      value={formData.fps}
-                      onChange={handleChange}
-                    />
-                  </div>
-                </div>
-                <div className="space-y-6">
-                  <label className="flex items-center justify-between p-6 bg-white/5 border border-white/10 rounded-[32px] cursor-pointer hover:bg-white/[0.08] transition-all group">
-                    <div className="flex items-center space-x-4">
-                      <div className="p-3 bg-purple-500/20 text-purple-400 rounded-2xl group-hover:scale-110 transition-transform">
-                        <Monitor className="w-6 h-6" />
-                      </div>
-                      <div>
-                        <p className="text-white font-bold uppercase tracking-tight">PTZ Control</p>
-                        <p className="text-neutral-600 text-[10px] font-black uppercase">Telemetery enabled</p>
-                      </div>
-                    </div>
-                    <input 
-                      type="checkbox" 
-                      name="ptz_enabled" 
-                      checked={formData.ptz_enabled} 
-                      onChange={handleChange}
-                      className="w-6 h-6 accent-blue-600 bg-neutral-800 border-white/5 rounded-lg" 
-                    />
-                  </label>
-                  <label className="flex items-center justify-between p-6 bg-white/5 border border-white/10 rounded-[32px] cursor-pointer hover:bg-white/[0.08] transition-all group">
-                    <div className="flex items-center space-x-4">
-                      <div className="p-3 bg-red-500/20 text-red-400 rounded-2xl group-hover:scale-110 transition-transform">
-                        <Activity className="w-6 h-6" />
-                      </div>
-                      <div>
-                        <p className="text-white font-bold uppercase tracking-tight">24/7 Archives</p>
-                        <p className="text-neutral-600 text-[10px] font-black uppercase">Persistent storage</p>
-                      </div>
-                    </div>
-                    <input 
-                      type="checkbox" 
-                      name="is_recording" 
-                      checked={formData.is_recording} 
-                      onChange={handleChange}
-                      className="w-6 h-6 accent-blue-600 bg-neutral-800 border-white/5 rounded-lg" 
-                    />
-                  </label>
                 </div>
               </div>
             )}

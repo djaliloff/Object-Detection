@@ -14,6 +14,11 @@ from shapely.geometry import Point, Polygon, LineString
 from shapely.ops import nearest_points
 import uuid
 from dotenv import load_dotenv
+from notification_service import notification_service
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "backend-api"))
+from database import SessionLocal
+from models import Zone as DBZone, Line as DBLine, Camera as DBCamera
 
 # Load environment variables from the root .env file
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -61,14 +66,37 @@ class Zone:
     id: str
     camera_id: str
     name: str
-    polygon: List[List[float]]
+    polygon: Optional[List[List[float]]]
     zone_type: str
+    is_active: bool = True
     config: Dict[str, Any] = field(default_factory=dict)
-    shapely_polygon: Optional[Polygon] = field(init=False)
+    shapely_polygon: Optional[Polygon] = field(init=False, default=None)
     
     def __post_init__(self):
         if self.polygon and len(self.polygon) >= 3:
             self.shapely_polygon = Polygon(self.polygon)
+            
+    def contains(self, point: Point) -> bool:
+        """Check if a point is within the zone based on its shape configuration."""
+        if not self.is_active:
+            return False
+            
+        shape = self.config.get('shape', 'polygon')
+        
+        if shape == 'circle':
+            center = self.config.get('center', [0, 0]) # Normalized [x, y]
+            radius = self.config.get('radius', 0)     # Normalized radius
+            dist = math.sqrt((point.x - center[0])**2 + (point.y - center[1])**2)
+            return dist <= radius
+        elif shape in ['square', 'rectangle']:
+            rect = self.config.get('rect', [0, 0, 0, 0]) # [x, y, w, h]
+            x, y, w, h = rect
+            return x <= point.x <= x + w and y <= point.y <= y + h
+        else:
+            # Default to polygon
+            if self.shapely_polygon:
+                return self.shapely_polygon.contains(point)
+        return False
 
 @dataclass
 class Line:
@@ -224,10 +252,8 @@ class IntrusionDetector:
         for zone in zones:
             if zone.zone_type != "exclusion":
                 continue
-            if not zone.shapely_polygon:
-                continue
             
-            is_in_zone = zone.shapely_polygon.contains(current_point)
+            is_in_zone = zone.contains(current_point)
             intrusion_key = f"{track.camera_id}_{track.id}_{zone.id}"
             
             if is_in_zone and intrusion_key not in self.active_intrusions:
@@ -279,10 +305,8 @@ class LoiteringDetector:
         for zone in zones:
             if zone.zone_type != "alert":
                 continue
-            if not zone.shapely_polygon:
-                continue
             
-            is_in_zone = zone.shapely_polygon.contains(current_point)
+            is_in_zone = zone.contains(current_point)
             loitering_key = f"{track.id}_{zone.id}"
             
             min_duration = zone.config.get("min_duration_seconds", 30)
@@ -601,66 +625,83 @@ class EventProcessor:
             logger.error(f"Failed to deserialize detections: {e}")
             return []
     
-    def _serialize_event(self, event: Event) -> bytes:
-        event_data = {
+    def _serialize_event_to_dict(self, event: Event) -> Dict:
+        """Convert event to dictionary for serialization and notification."""
+        return {
             'id': event.id,
             'event_type': event.event_type,
             'camera_id': event.camera_id,
             'track_id': event.track_id,
-            'start_time': event.start_time.isoformat(),
-            'end_time': event.end_time.isoformat() if event.end_time else None,
+            'start_time': event.start_time.isoformat() if isinstance(event.start_time, datetime) else event.start_time,
+            'end_time': event.end_time.isoformat() if isinstance(event.end_time, datetime) else event.end_time,
             'severity': event.severity,
             'zone_id': event.zone_id,
             'event_data': event.event_data,
             'status': event.status,
             'snapshot_refs': event.snapshot_refs
         }
-        
-        return json.dumps(event_data).encode('utf-8')
+
+    def _get_camera_name(self, camera_id: str) -> str:
+        """Helper to get camera name (stub for now)."""
+        # In a real app, this would query the DB or a cache
+        return f"Camera {camera_id[:8]}"
+
+    def _serialize_event(self, event: Event) -> bytes:
+        """Serialize event object to JSON bytes."""
+        return json.dumps(self._serialize_event_to_dict(event)).encode('utf-8')
     
     def _load_zones_and_lines(self):
-        """Load zones and lines from database or configuration."""
-        example_zones = [
-            Zone(
-                id="zone_001",
-                camera_id="cam_001",
-                name="Restricted Area",
-                polygon=[[100, 100], [400, 100], [400, 400], [100, 400]],
-                zone_type="exclusion",
-                config={"min_duration_seconds": 2}
-            ),
-            Zone(
-                id="zone_002",
-                camera_id="cam_001",
-                name="Loitering Zone",
-                polygon=[[500, 300], [800, 300], [800, 600], [500, 600]],
-                zone_type="alert",
-                config={"min_duration_seconds": 30, "max_displacement_pixels": 50}
-            )
-        ]
-        
-        example_lines = [
-            Line(
-                id="line_001",
-                camera_id="cam_001",
-                name="Entrance Line",
-                start_point=[300, 0],
-                end_point=[300, 720],
-                direction="both"
-            )
-        ]
-        
-        for zone in example_zones:
-            if zone.camera_id not in self.zones:
-                self.zones[zone.camera_id] = []
-            self.zones[zone.camera_id].append(zone)
-        
-        for line in example_lines:
-            if line.camera_id not in self.lines:
-                self.lines[line.camera_id] = []
-            self.lines[line.camera_id].append(line)
-        
-        logger.info(f"Loaded {len(example_zones)} zones and {len(example_lines)} lines")
+        """Load zones and lines from database."""
+        try:
+            db = SessionLocal()
+            db_zones = db.query(DBZone).all()
+            db_lines = db.query(DBLine).all()
+            
+            # Reset internal maps
+            self.zones = {}
+            self.lines = {}
+            
+            for z in db_zones:
+                cam_id = str(z.camera_id)
+                if cam_id not in self.zones:
+                    self.zones[cam_id] = []
+                
+                # Create Zone dataclass from DB model
+                zone = Zone(
+                    id=str(z.id),
+                    camera_id=cam_id,
+                    name=z.name,
+                    polygon=z.polygon,
+                    zone_type=z.zone_type,
+                    is_active=z.is_active,
+                    config=z.config_json or {}
+                )
+                self.zones[cam_id].append(zone)
+                
+            for l in db_lines:
+                cam_id = str(l.camera_id)
+                if cam_id not in self.lines:
+                    self.lines[cam_id] = []
+                
+                line = Line(
+                    id=str(l.id),
+                    camera_id=cam_id,
+                    name=l.name,
+                    start_point=l.start_point,
+                    end_point=l.end_point,
+                    direction=l.direction,
+                    config=l.config_json or {}
+                )
+                self.lines[cam_id].append(line)
+                
+            db.close()
+            logger.info(f"Synchronized {len(db_zones)} zones and {len(db_lines)} lines from DB")
+        except Exception as e:
+            logger.error(f"Failed to load zones from database: {e}")
+            # Fallback to empty or keep existing
+            if not hasattr(self, 'zones'):
+                self.zones = {}
+                self.lines = {}
     
     def _process_detections(self, camera_id: str, detections: List[Detection]) -> List[Event]:
         """Process detections with track IDs from AI engine and run event detection."""
@@ -705,8 +746,15 @@ class EventProcessor:
         
         logger.info("Event processor started (using AI-engine MOT track IDs)")
         
+        last_zone_refresh = time.time()
+        
         while self.running:
             try:
+                # Periodic zone refresh (every 5 seconds)
+                if time.time() - last_zone_refresh > 5:
+                    self._load_zones_and_lines()
+                    last_zone_refresh = time.time()
+                
                 detection_data = self.redis_client.lpop('detection_queue')
                 if detection_data is None:
                     await asyncio.sleep(0.01)
@@ -721,11 +769,21 @@ class EventProcessor:
                 camera_id = detections[0].camera_id
                 events = self._process_detections(camera_id, detections)
                 
-                # Publish events
+                    # Publish events
                 for event in events:
-                    event_data = self._serialize_event(event)
-                    self.redis_client.rpush('event_queue', event_data)
-                    self.redis_client.publish('surveillance_events', event_data)
+                    event_data_dict = self._serialize_event_to_dict(event)
+                    event_data_bytes = json.dumps(event_data_dict).encode('utf-8')
+                    
+                    self.redis_client.rpush('event_queue', event_data_bytes)
+                    self.redis_client.publish('surveillance_events', event_data_bytes)
+                    
+                    # Send email for specific events or high severity
+                    if event.severity in ["high", "critical"] or event.event_type in ["intrusion", "loitering"]:
+                        # Run email sending in background task
+                        asyncio.create_task(notification_service.send_event_email(
+                            event_data_dict, 
+                            camera_name=self._get_camera_name(camera_id)
+                        ))
                     
                     # Update event type stats
                     self.stats['events_by_type'][event.event_type] += 1
@@ -746,7 +804,7 @@ class EventProcessor:
                 
                 if events:
                     logger.info(
-                        f"[MOT Events] Camera {camera_id}: {len(detections)} detections → "
+                        f"[MOT Events] Camera {camera_id}: {len(detections)} detections -> "
                         f"{len(events)} events: {[e.event_type for e in events]}"
                     )
                 

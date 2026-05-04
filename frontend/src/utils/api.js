@@ -103,6 +103,15 @@ export const camerasAPI = {
   deleteCamera: (id) => api.delete(`/cameras/${id}`),
   getCameraHealth: (id) => api.get(`/cameras/${id}/health`),
   discoverCameras: () => api.post('/cameras/discover'),
+  uploadVideo: (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post('/cameras/upload-video', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+  },
 };
 
 export const eventsAPI = {

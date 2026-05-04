@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, APIRouter
+from fastapi import FastAPI, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, APIRouter, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -15,7 +15,7 @@ from models import User, Camera, CameraGroup, Event, Zone, Detection
 from schemas import (
     UserCreate, User as UserSchema, CameraCreate, Camera as CameraSchema,
     CameraGroupCreate, CameraGroup as CameraGroupSchema, EventCreate, Event as EventSchema,
-    ZoneCreate, Zone as ZoneSchema, LoginRequest, Token, AnalyticsSummary,
+    ZoneCreate, Zone as ZoneSchema, ZoneUpdate, LoginRequest, Token, AnalyticsSummary,
     WebSocketMessage, FrameUpdate, EventAlert, CameraStatusUpdate
 )
 from auth import (
@@ -55,7 +55,14 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:80"],  # Frontend URLs
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+        "http://localhost:80",
+        "http://127.0.0.1:80",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -109,6 +116,8 @@ class ConnectionManager:
             for connection in self.camera_subscriptions[camera_id]:
                 try:
                     await connection.send_text(message_json)
+                    if message.get('type') == 'detection':
+                        logger.debug(f"Broadcasted detection for camera {camera_id} to a subscriber")
                 except:
                     disconnected.append(connection)
             
@@ -349,6 +358,41 @@ async def create_zone(
     logger.info(f"Zone {zone_data.name} created by {current_user.username}")
     return db_zone
 
+@api_v1_router.put("/zones/{zone_id}", response_model=ZoneSchema)
+async def update_zone(
+    zone_id: str,
+    zone_data: ZoneUpdate,
+    current_user: User = Depends(require_operator_or_admin),
+    db: Session = Depends(get_db)
+):
+    db_zone = db.query(Zone).filter(Zone.id == zone_id).first()
+    if not db_zone:
+        raise HTTPException(status_code=404, detail="Zone not found")
+    
+    update_data = zone_data.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_zone, key, value)
+    
+    db.commit()
+    db.refresh(db_zone)
+    logger.info(f"Zone {zone_id} updated by {current_user.username}")
+    return db_zone
+
+@api_v1_router.delete("/zones/{zone_id}")
+async def delete_zone(
+    zone_id: str,
+    current_user: User = Depends(require_operator_or_admin),
+    db: Session = Depends(get_db)
+):
+    db_zone = db.query(Zone).filter(Zone.id == zone_id).first()
+    if not db_zone:
+        raise HTTPException(status_code=404, detail="Zone not found")
+    
+    db.delete(db_zone)
+    db.commit()
+    logger.info(f"Zone {zone_id} deleted by {current_user.username}")
+    return {"message": "Zone deleted successfully"}
+
 # Event endpoints
 @api_v1_router.get("/events", response_model=List[EventSchema])
 async def get_events(
@@ -415,6 +459,29 @@ async def get_analytics_summary(
     )
 
 # Include API Router
+# Upload video file for looped detection
+@api_v1_router.post("/cameras/upload-video")
+async def upload_video(file: UploadFile = File(...), current_user: User = Depends(get_current_active_user)):
+    # Create uploads directory if it doesn't exist
+    upload_dir = os.path.join(os.getcwd(), "uploads", "tactical_archives")
+    os.makedirs(upload_dir, exist_ok=True)
+    
+    file_path = os.path.join(upload_dir, file.filename)
+    with open(file_path, "wb") as buffer:
+        content = await file.read()
+        buffer.write(content)
+    
+    # Return the relative path or absolute path for the camera gateway
+    return {
+        "filename": file.filename, 
+        "file_path": os.path.abspath(file_path),
+        "web_url": f"/uploads/tactical_archives/{file.filename}"
+    }
+
+from fastapi.staticfiles import StaticFiles
+
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
 app.include_router(api_v1_router, prefix="/api/v1")
 
 # WebSocket endpoint
@@ -448,25 +515,31 @@ async def process_redis_messages():
     
     while True:
         try:
-            message = pubsub.get_message(timeout=0.001)
-            if message and message["type"] == "message":
-                channel = message["channel"]
-                data = json.loads(message["data"])
+            # Process all available messages in a burst
+            while True:
+                message = pubsub.get_message(timeout=0)
+                if not message:
+                    break
                 
-                # Broadcast to appropriate clients
-                if channel == "surveillance_events":
-                    await manager.broadcast(data, data.get("camera_id"))
-                elif channel == "surveillance_frames":
-                    await manager.broadcast(data, data.get("camera_id"))
-                elif channel == "camera_status":
-                    await manager.broadcast(data, data.get("camera_id"))
-                elif channel == "surveillance_detections" or channel == b"surveillance_detections":
-                    # Add type so the frontend recognizes it
-                    if 'type' not in data:
-                        data['type'] = 'detection'
-                    await manager.broadcast(data, data.get("camera_id"))
+                if message["type"] == "message":
+                    channel = message["channel"]
+                    if isinstance(channel, bytes):
+                        channel = channel.decode('utf-8')
+                        
+                    try:
+                        data = json.loads(message["data"])
+                        
+                        # Broadcast to appropriate clients
+                        if channel in ["surveillance_events", "surveillance_frames", "camera_status"]:
+                            await manager.broadcast(data, data.get("camera_id"))
+                        elif channel == "surveillance_detections":
+                            if 'type' not in data:
+                                data['type'] = 'detection'
+                            await manager.broadcast(data, data.get("camera_id"))
+                    except Exception as json_err:
+                        logger.error(f"Error decoding Redis data: {json_err}")
             
-            await asyncio.sleep(0.01)        
+            await asyncio.sleep(0.005) # Minimal sleep to yield control
         except Exception as e:
             logger.error(f"Error processing Redis message: {e}")
             await asyncio.sleep(1)

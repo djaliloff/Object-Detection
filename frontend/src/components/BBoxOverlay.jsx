@@ -32,11 +32,9 @@ const hexToRgba = (hex, alpha) => {
 };
 
 const BBoxOverlay = ({ detections = [], showTrajectory = true, showVelocity = true }) => {
-  if (!Array.isArray(detections)) return null;
-
   // Memoize trajectory SVG paths
   const trajectoryPaths = useMemo(() => {
-    if (!showTrajectory) return {};
+    if (!showTrajectory || !Array.isArray(detections)) return {};
     const paths = {};
     detections.forEach((det) => {
       const trajectory = det.trajectory;
@@ -53,6 +51,8 @@ const BBoxOverlay = ({ detections = [], showTrajectory = true, showVelocity = tr
     });
     return paths;
   }, [detections, showTrajectory]);
+
+  if (!Array.isArray(detections)) return null;
 
   return (
     <div className="absolute inset-0 pointer-events-none z-50 overflow-hidden select-none">
@@ -141,21 +141,22 @@ const BBoxOverlay = ({ detections = [], showTrajectory = true, showVelocity = tr
         return (
           <div
             key={hasTrackId ? `track-${trackId}` : `det-${idx}`}
-            className="absolute rounded-[3px]"
+            className="absolute rounded-[4px] detection-box-premium"
             style={{
               left: `${xmin * 100}%`,
               top: `${ymin * 100}%`,
               width: `${(xmax - xmin) * 100}%`,
               height: `${(ymax - ymin) * 100}%`,
-              border: `2px solid ${hexToRgba(color, 0.85)}`,
-              boxShadow: `0 0 12px ${hexToRgba(color, 0.25)}, inset 0 0 6px ${hexToRgba(color, 0.08)}`,
-              transition: 'all 0.12s ease-out',
+              border: `4px solid ${hexToRgba(color, 1.0)}`,
+              boxShadow: `0 0 20px ${hexToRgba(color, 0.6)}, inset 0 0 10px ${hexToRgba(color, 0.25)}`,
+              transition: 'all 0.1s cubic-bezier(0.17, 0.67, 0.83, 0.67)',
+              background: `${hexToRgba(color, 0.05)}`,
             }}
           >
             {/* ─── Track ID Badge ─── */}
             {hasTrackId && (
               <div
-                className="absolute -top-[1px] -right-[1px] flex items-center justify-center rounded-bl-md rounded-tr-[2px]"
+                className="absolute -top-[2px] -right-[2px] flex items-center justify-center rounded-bl-md rounded-tr-[2px]"
                 style={{
                   background: color,
                   minWidth: '20px',
@@ -206,29 +207,29 @@ const BBoxOverlay = ({ detections = [], showTrajectory = true, showVelocity = tr
             <div
               className="absolute -top-[1px] -left-[1px] w-2.5 h-2.5 rounded-tl-[3px]"
               style={{
-                borderTop: `2.5px solid ${color}`,
-                borderLeft: `2.5px solid ${color}`,
+                borderTop: `3.5px solid ${color}`,
+                borderLeft: `3.5px solid ${color}`,
               }}
             />
             <div
               className="absolute -bottom-[1px] -right-[1px] w-2.5 h-2.5 rounded-br-[3px]"
               style={{
-                borderBottom: `2.5px solid ${color}`,
-                borderRight: `2.5px solid ${color}`,
+                borderBottom: `3.5px solid ${color}`,
+                borderRight: `3.5px solid ${color}`,
               }}
             />
             <div
               className="absolute -top-[1px] -right-[1px] w-2.5 h-2.5 rounded-tr-[3px]"
               style={{
-                borderTop: `2.5px solid ${color}`,
-                borderRight: `2.5px solid ${color}`,
+                borderTop: `3.5px solid ${color}`,
+                borderRight: `3.5px solid ${color}`,
               }}
             />
             <div
               className="absolute -bottom-[1px] -left-[1px] w-2.5 h-2.5 rounded-bl-[3px]"
               style={{
-                borderBottom: `2.5px solid ${color}`,
-                borderLeft: `2.5px solid ${color}`,
+                borderBottom: `3.5px solid ${color}`,
+                borderLeft: `3.5px solid ${color}`,
               }}
             />
           </div>

@@ -5,12 +5,15 @@ import {
   Filter
 } from 'lucide-react';
 import MultiCameraGrid from '../components/MultiCameraGrid';
+import ZoneManagerModal from '../components/ZoneManagerModal';
 import { camerasAPI } from '../utils/api';
 
 const Surveillance = () => {
   const [gridLayout, setGridLayout] = useState('2x2'); // 1x1, 2x2, 3x3, 4x4
   const [selectedCameraId, setSelectedCameraId] = useState(null);
   const [filterModality, setFilterModality] = useState('all'); // all, rgb, thermal, mjpeg, fused
+  const [isZoneModalOpen, setIsZoneModalOpen] = useState(false);
+  const [activeZoneCamera, setActiveZoneCamera] = useState(null);
   
   // Fetch cameras
   const { data: cameras, isLoading } = useQuery({
@@ -26,6 +29,11 @@ const Surveillance = () => {
   const handleMaximize = (camera) => {
     setSelectedCameraId(camera.id);
     setGridLayout('1x1');
+  };
+
+  const handleOpenZoneManager = (camera) => {
+    setActiveZoneCamera(camera);
+    setIsZoneModalOpen(true);
   };
 
   const filteredCameras = useMemo(() => {
@@ -109,9 +117,16 @@ const Surveillance = () => {
             selectedCameraId={selectedCameraId}
             onCameraSelect={handleCameraSelect}
             onMaximize={handleMaximize}
+            onOpenZoneManager={handleOpenZoneManager}
             gridLayout={gridLayout}
           />
         </div>
+
+        <ZoneManagerModal 
+          isOpen={isZoneModalOpen}
+          onClose={() => setIsZoneModalOpen(false)}
+          camera={activeZoneCamera}
+        />
       </div>
     </div>
   );
