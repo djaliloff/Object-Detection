@@ -22,7 +22,7 @@ if not exist "venv311\Scripts\python.exe" (
 :: 1. Start Redis
 echo [1/6] Starting Redis Server...
 if exist "redis\redis-server.exe" (
-    start "Redis Server" /d "%ROOT_DIR%redis" cmd /c "redis-server.exe redis.windows.conf || echo Redis might already be running"
+    start "Redis Server" /d "%ROOT_DIR%redis" cmd /k "redis-server.exe redis.windows.conf || echo Redis might already be running"
 ) else (
     start "Redis Server" cmd /c "redis-server || echo Redis might already be running as a service"
 )

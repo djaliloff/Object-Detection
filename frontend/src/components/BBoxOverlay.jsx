@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 
 /**
  * BBoxOverlay.jsx — Multi-Object Tracking overlay with:
@@ -31,7 +31,106 @@ const hexToRgba = (hex, alpha) => {
   return `rgba(${r},${g},${b},${alpha})`;
 };
 
-const BBoxOverlay = ({ detections = [], showTrajectory = true, showVelocity = true }) => {
+const TARGET_CLASSES = ['suitcase', 'handbag', 'backpack'];
+
+function isPointInPolygon(point, vs) {
+  let x = point[0], y = point[1];
+  let inside = false;
+  for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
+    let xi = vs[i][0], yi = vs[i][1];
+    let xj = vs[j][0], yj = vs[j][1];
+    let intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function checkZoneIntrusion(xmin, ymin, xmax, ymax, zones) {
+  if (!zones || zones.length === 0) return false;
+  const xCenter = (xmin + xmax) / 2;
+  const yBottom = ymax;
+  const point = [xCenter, yBottom];
+
+  for (const zone of zones) {
+    if (zone.zone_type !== 'exclusion' || !zone.is_active) continue;
+    const config = zone.config_json || {};
+    if (config.shape === 'polygon' && zone.polygon) {
+      if (isPointInPolygon(point, zone.polygon)) return true;
+    } else if ((config.shape === 'square' || config.shape === 'rectangle') && config.rect) {
+      const [zx, zy, zw, zh] = config.rect;
+      if (xCenter >= zx && xCenter <= zx + zw && yBottom >= zy && yBottom <= zy + zh) return true;
+    } else if (config.shape === 'circle' && config.center && config.radius) {
+      const [cx, cy] = config.center;
+      const r = config.radius;
+      if (Math.pow(xCenter - cx, 2) + Math.pow(yBottom - cy, 2) <= r * r) return true;
+    }
+  }
+  return false;
+}
+
+const BBoxOverlay = ({ detections = [], zones = [], showTrajectory = true, showVelocity = true }) => {
+  const [staticObjects, setStaticObjects] = useState([]); // [{ id, class_name, bbox, firstSeen, lastSeen }]
+  const [now, setNow] = useState(Date.now());
+  
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!Array.isArray(detections)) return;
+    
+    const nowTime = Date.now();
+    
+    setStaticObjects(prev => {
+      let updated = [...prev];
+      
+      detections.forEach(det => {
+        const className = (det.class_name || det.label || '').toLowerCase().trim();
+        if (TARGET_CLASSES.includes(className)) {
+          const detBBox = det.bbox || [det.xmin, det.ymin, det.xmax, det.ymax];
+          if (!detBBox) return;
+          
+          const [x1, y1, x2, y2] = detBBox;
+          const cx = (x1 + x2) / 2;
+          const cy = (y1 + y2) / 2;
+          
+          let matched = false;
+          for (let obj of updated) {
+            const [ox1, oy1, ox2, oy2] = obj.bbox;
+            const ocx = (ox1 + ox2) / 2;
+            const ocy = (oy1 + oy2) / 2;
+            
+            // Allow ~10% screen movement for matching static objects
+            const dist = Math.sqrt(Math.pow(cx - ocx, 2) + Math.pow(cy - ocy, 2));
+            if (dist < 0.1 && obj.class_name === className) {
+              obj.lastSeen = nowTime;
+              obj.bbox = detBBox;
+              det._spatialId = obj.id;
+              matched = true;
+              break;
+            }
+          }
+          
+          if (!matched) {
+            const newId = `static-${Math.random().toString(36).substr(2, 9)}`;
+            updated.push({
+              id: newId,
+              class_name: className,
+              bbox: detBBox,
+              firstSeen: nowTime,
+              lastSeen: nowTime
+            });
+            det._spatialId = newId;
+          }
+        }
+      });
+      
+      // Cleanup objects not seen for > 5 seconds to avoid memory leaks or ghost alerts
+      return updated.filter(obj => nowTime - obj.lastSeen < 5000);
+    });
+  }, [detections]);
+
   // Memoize trajectory SVG paths
   const trajectoryPaths = useMemo(() => {
     if (!showTrajectory || !Array.isArray(detections)) return {};
@@ -138,27 +237,62 @@ const BBoxOverlay = ({ detections = [], showTrajectory = true, showVelocity = tr
         const hasTrackId = trackId != null && trackId >= 0;
         const velocity = det.velocity;
 
+        const classNameLower = (det.class_name || det.label || '').toLowerCase().trim();
+        const isTarget = TARGET_CLASSES.includes(classNameLower);
+        const isPerson = classNameLower === 'person';
+        const isIntruding = isPerson && checkZoneIntrusion(xmin, ymin, xmax, ymax, zones);
+        
+        const finalColor = isIntruding ? '#ef4444' : color;
+        
+        let durationSec = 0;
+        let isMissingAlert = false;
+        let startTime = null;
+        
+        if (isTarget && det._spatialId) {
+          const staticObj = staticObjects.find(o => o.id === det._spatialId);
+          if (staticObj) {
+            startTime = staticObj.firstSeen;
+            durationSec = Math.floor((now - startTime) / 1000);
+            if (durationSec >= 180) {
+               isMissingAlert = true;
+            }
+          }
+        }
+
         return (
           <div
             key={hasTrackId ? `track-${trackId}` : `det-${idx}`}
-            className="absolute rounded-[4px] detection-box-premium"
+            className={`absolute rounded-[4px] detection-box-premium ${isIntruding ? 'animate-pulse' : ''}`}
             style={{
               left: `${xmin * 100}%`,
               top: `${ymin * 100}%`,
               width: `${(xmax - xmin) * 100}%`,
               height: `${(ymax - ymin) * 100}%`,
-              border: `4px solid ${hexToRgba(color, 1.0)}`,
-              boxShadow: `0 0 20px ${hexToRgba(color, 0.6)}, inset 0 0 10px ${hexToRgba(color, 0.25)}`,
+              border: `4px solid ${hexToRgba(finalColor, isIntruding ? 1.0 : 0.8)}`,
+              boxShadow: `0 0 20px ${hexToRgba(finalColor, 0.6)}, inset 0 0 10px ${hexToRgba(finalColor, 0.25)}`,
               transition: 'all 0.1s cubic-bezier(0.17, 0.67, 0.83, 0.67)',
-              background: `${hexToRgba(color, 0.05)}`,
+              background: `${hexToRgba(finalColor, isIntruding ? 0.2 : 0.05)}`,
             }}
           >
+            {/* ─── Target Object Counter / Alert ─── */}
+            {isTarget && startTime && (
+              <div 
+                className={`absolute left-1/2 -translate-x-1/2 whitespace-nowrap px-2 py-1 rounded-md text-[10px] font-black tracking-widest shadow-xl z-20 transition-all duration-300 ${isMissingAlert ? 'bg-yellow-400 text-black animate-pulse scale-110' : 'bg-black/80 text-white backdrop-blur-md'}`}
+                style={{
+                  top: '-35px',
+                  border: `2px solid ${isMissingAlert ? '#fbbf24' : 'rgba(255,255,255,0.2)'}`,
+                }}
+              >
+                {isMissingAlert ? 'MISSING OBJECT' : `${durationSec}S`}
+              </div>
+            )}
+
             {/* ─── Track ID Badge ─── */}
             {hasTrackId && (
               <div
                 className="absolute -top-[2px] -right-[2px] flex items-center justify-center rounded-bl-md rounded-tr-[2px]"
                 style={{
-                  background: color,
+                  background: finalColor,
                   minWidth: '20px',
                   height: '16px',
                   padding: '0 4px',
@@ -172,20 +306,21 @@ const BBoxOverlay = ({ detections = [], showTrajectory = true, showVelocity = tr
 
             {/* ─── Label Bar ─── */}
             <div
-              className="absolute top-0 left-0 -translate-y-[calc(100%+2px)] flex items-center space-x-1.5 whitespace-nowrap rounded-t-sm"
+              className={`absolute top-0 left-0 -translate-y-[calc(100%+2px)] flex items-center space-x-1.5 whitespace-nowrap rounded-t-sm ${isIntruding ? 'animate-bounce' : ''}`}
               style={{
-                background: hexToRgba(color, 0.88),
-                backdropFilter: 'blur(8px)',
-                padding: '2px 6px',
-                borderTop: `1px solid ${hexToRgba(color, 0.5)}`,
-                borderLeft: `1px solid ${hexToRgba(color, 0.5)}`,
-                borderRight: `1px solid ${hexToRgba(color, 0.5)}`,
+                background: hexToRgba(finalColor, 0.95),
+                backdropFilter: 'blur(12px)',
+                padding: '3px 8px',
+                borderTop: `1px solid ${hexToRgba(finalColor, 0.6)}`,
+                borderLeft: `1px solid ${hexToRgba(finalColor, 0.6)}`,
+                borderRight: `1px solid ${hexToRgba(finalColor, 0.6)}`,
+                boxShadow: isIntruding ? `0 -4px 12px ${hexToRgba(finalColor, 0.4)}` : 'none',
               }}
             >
               <span className="uppercase tracking-widest text-white text-[9px] font-black">
-                {det.class_name || label}
+                {det.class_name || label} {isIntruding ? ' [INTRUSION]' : ''}
               </span>
-              <span className="text-white/60 text-[8px] font-semibold">
+              <span className="text-white/80 text-[8px] font-bold">
                 {Math.round(confidence * 100)}%
               </span>
               {/* Velocity indicator */}
@@ -207,29 +342,29 @@ const BBoxOverlay = ({ detections = [], showTrajectory = true, showVelocity = tr
             <div
               className="absolute -top-[1px] -left-[1px] w-2.5 h-2.5 rounded-tl-[3px]"
               style={{
-                borderTop: `3.5px solid ${color}`,
-                borderLeft: `3.5px solid ${color}`,
+                borderTop: `3.5px solid ${finalColor}`,
+                borderLeft: `3.5px solid ${finalColor}`,
               }}
             />
             <div
               className="absolute -bottom-[1px] -right-[1px] w-2.5 h-2.5 rounded-br-[3px]"
               style={{
-                borderBottom: `3.5px solid ${color}`,
-                borderRight: `3.5px solid ${color}`,
+                borderBottom: `3.5px solid ${finalColor}`,
+                borderRight: `3.5px solid ${finalColor}`,
               }}
             />
             <div
               className="absolute -top-[1px] -right-[1px] w-2.5 h-2.5 rounded-tr-[3px]"
               style={{
-                borderTop: `3.5px solid ${color}`,
-                borderRight: `3.5px solid ${color}`,
+                borderTop: `3.5px solid ${finalColor}`,
+                borderRight: `3.5px solid ${finalColor}`,
               }}
             />
             <div
               className="absolute -bottom-[1px] -left-[1px] w-2.5 h-2.5 rounded-bl-[3px]"
               style={{
-                borderBottom: `3.5px solid ${color}`,
-                borderLeft: `3.5px solid ${color}`,
+                borderBottom: `3.5px solid ${finalColor}`,
+                borderLeft: `3.5px solid ${finalColor}`,
               }}
             />
           </div>

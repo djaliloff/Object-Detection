@@ -93,7 +93,7 @@ models:
       resize: true
       pad: true
     postprocessing:
-      confidence_threshold: 0.7
+      confidence_threshold: 0.3
       nms_threshold: 0.45
       max_detections: 1000
     performance_tier: "ultra_low_latency"
@@ -194,7 +194,7 @@ models:
       resize: true
       pad: true
     postprocessing:
-      confidence_threshold: 0.7
+      confidence_threshold: 0.3
       nms_threshold: 0.45
       max_detections: 1000
     performance_tier: "ultra_fast_gpu"
@@ -294,7 +294,7 @@ models:
       resize: true
       pad: true
     postprocessing:
-      confidence_threshold: 0.7
+      confidence_threshold: 0.3
       nms_threshold: 0.45
       max_detections: 1000
 
@@ -362,10 +362,10 @@ routing:
 # ═══════════════════════════════════════════════════════════
 tracking:
   # Default tracker: 'botsort' (StrongSORT-class) or 'bytetrack' (fast, motion-only)
-  default_tracker: "bytetrack"
+  default_tracker: "botsort"
   
   # Path to tracker config file (relative to ai-engine/)
-  config_file: "bytetrack.yaml"
+  config_file: "botsort.yaml"
   
   # Per-camera tracker override (optional)
   # Useful for dense/crowded scenes (use botsort) vs simple scenes (use bytetrack)

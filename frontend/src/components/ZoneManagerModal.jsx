@@ -10,7 +10,9 @@ import {
   EyeOff,
   Plus,
   ShieldAlert,
-  Target
+  Target,
+  Hexagon,
+  Pencil
 } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { zonesAPI } from '../utils/api';
@@ -29,10 +31,12 @@ const isMjpegUrl = (url = '') => {
 const ZoneManagerModal = ({ isOpen, onClose, camera }) => {
   const queryClient = useQueryClient();
   const canvasRef = useRef(null);
-  const [drawingMode, setDrawingMode] = useState('none'); // none, square, circle
+  const [drawingMode, setDrawingMode] = useState('none'); // none, square, circle, polygon
+  const [selectedZoneType, setSelectedZoneType] = useState('exclusion');
   const [isDrawing, setIsDrawing] = useState(false);
   const [startPos, setStartPos] = useState(null);
   const [currentPos, setCurrentPos] = useState(null);
+  const [polyPoints, setPolyPoints] = useState([]); // [{x, y}, ...]
   const [isMediaLoading, setIsMediaLoading] = useState(true);
 
   const streamUrl = useMemo(() => {
@@ -113,6 +117,12 @@ const ZoneManagerModal = ({ isOpen, onClose, camera }) => {
       } else if (config.shape === 'square' || config.shape === 'rectangle') {
         const [x, y, w, h] = config.rect;
         ctx.rect(x * canvas.width, y * canvas.height, w * canvas.width, h * canvas.height);
+      } else if (config.shape === 'polygon' && zone.polygon) {
+        zone.polygon.forEach((pt, i) => {
+          if (i === 0) ctx.moveTo(pt[0] * canvas.width, pt[1] * canvas.height);
+          else ctx.lineTo(pt[0] * canvas.width, pt[1] * canvas.height);
+        });
+        ctx.closePath();
       }
 
       ctx.fill();
@@ -129,21 +139,65 @@ const ZoneManagerModal = ({ isOpen, onClose, camera }) => {
     });
 
     // Draw active drawing
-    if (isDrawing && startPos && currentPos) {
+    if (isDrawing && currentPos) {
       ctx.beginPath();
       ctx.lineWidth = 2;
-      ctx.setLineDash([5, 5]);
-      ctx.strokeStyle = '#3b82f6';
+      if (drawingMode === 'freehand') {
+        ctx.setLineDash([]);
+      } else {
+        ctx.setLineDash([5, 5]);
+      }
+      ctx.strokeStyle = selectedZoneType === 'exclusion' ? '#ef4444' : '#3b82f6';
       
-      if (drawingMode === 'circle') {
+      if (drawingMode === 'circle' && startPos) {
         const radius = Math.sqrt(Math.pow(currentPos.x - startPos.x, 2) + Math.pow(currentPos.y - startPos.y, 2));
         ctx.arc(startPos.x, startPos.y, radius, 0, Math.PI * 2);
-      } else if (drawingMode === 'square') {
+      } else if (drawingMode === 'square' && startPos) {
         ctx.rect(startPos.x, startPos.y, currentPos.x - startPos.x, currentPos.y - startPos.y);
+      } else if (drawingMode === 'polygon' && polyPoints.length > 0) {
+        ctx.moveTo(polyPoints[0].x, polyPoints[0].y);
+        polyPoints.forEach(pt => ctx.lineTo(pt.x, pt.y));
+        ctx.lineTo(currentPos.x, currentPos.y);
+        
+        // Draw dots for existing points
+        polyPoints.forEach(pt => {
+          ctx.save();
+          ctx.fillStyle = '#3b82f6';
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        });
+      } else if (drawingMode === 'freehand' && polyPoints.length > 0) {
+        ctx.moveTo(polyPoints[0].x, polyPoints[0].y);
+        polyPoints.forEach(pt => ctx.lineTo(pt.x, pt.y));
+        ctx.lineTo(currentPos.x, currentPos.y);
       }
       
       ctx.stroke();
       ctx.setLineDash([]);
+    }
+
+    // Draw Crosshair if in drawing mode
+    if (drawingMode !== 'none' && drawingMode !== 'freehand' && currentPos) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(59, 130, 246, 0.4)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 4]);
+      
+      // Horizontal
+      ctx.beginPath();
+      ctx.moveTo(0, currentPos.y);
+      ctx.lineTo(canvas.width, currentPos.y);
+      ctx.stroke();
+      
+      // Vertical
+      ctx.beginPath();
+      ctx.moveTo(currentPos.x, 0);
+      ctx.lineTo(currentPos.x, canvas.height);
+      ctx.stroke();
+      
+      ctx.restore();
     }
   }, [zones, isDrawing, startPos, currentPos, drawingMode]);
 
@@ -151,27 +205,110 @@ const ZoneManagerModal = ({ isOpen, onClose, camera }) => {
     draw();
   }, [draw]);
 
+  const getCanvasCoordinates = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const scale = Math.min(rect.width / canvas.width, rect.height / canvas.height);
+    const xOffset = (rect.width - canvas.width * scale) / 2;
+    const yOffset = (rect.height - canvas.height * scale) / 2;
+    const x = (e.clientX - rect.left - xOffset) / scale;
+    const y = (e.clientY - rect.top - yOffset) / scale;
+    return { x, y };
+  };
+
   const handleMouseDown = (e) => {
     if (drawingMode === 'none') return;
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    setStartPos({ x, y });
-    setCurrentPos({ x, y });
-    setIsDrawing(true);
+    const { x, y } = getCanvasCoordinates(e);
+
+    if (drawingMode === 'polygon') {
+      // Check if clicking near first point to close
+      if (polyPoints.length >= 3) {
+        const first = polyPoints[0];
+        const dist = Math.sqrt(Math.pow(x - first.x, 2) + Math.pow(y - first.y, 2));
+        if (dist < 15) {
+          finalizePolygon();
+          return;
+        }
+      }
+      setPolyPoints([...polyPoints, { x, y }]);
+      setCurrentPos({ x, y });
+      setIsDrawing(true);
+    } else if (drawingMode === 'freehand') {
+      setPolyPoints([{ x, y }]);
+      setCurrentPos({ x, y });
+      setIsDrawing(true);
+    } else {
+      setStartPos({ x, y });
+      setCurrentPos({ x, y });
+      setIsDrawing(true);
+    }
   };
 
   const handleMouseMove = (e) => {
-    if (!isDrawing) return;
-    const rect = canvasRef.current.getBoundingClientRect();
-    setCurrentPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    const { x, y } = getCanvasCoordinates(e);
+
+    if (!isDrawing) {
+      if (drawingMode !== 'none') {
+        setCurrentPos({ x, y });
+      }
+      return;
+    }
+
+    if (drawingMode === 'freehand') {
+      setPolyPoints(prev => {
+        const lastPt = prev[prev.length - 1];
+        if (lastPt) {
+          const dist = Math.sqrt(Math.pow(x - lastPt.x, 2) + Math.pow(y - lastPt.y, 2));
+          if (dist > 10) {
+            return [...prev, { x, y }];
+          }
+          return prev;
+        }
+        return [{ x, y }];
+      });
+    }
+
+    setCurrentPos({ x, y });
   };
 
   const handleMouseUp = () => {
     if (!isDrawing) return;
+    if (drawingMode === 'polygon') return;
+
     setIsDrawing(false);
 
     const canvas = canvasRef.current;
+
+    if (drawingMode === 'freehand') {
+      if (polyPoints.length < 3) {
+        toast.error('Freehand perimeter requires more movement');
+        setPolyPoints([]);
+        return;
+      }
+      const normalizedPoints = polyPoints.map(pt => [
+        pt.x / canvas.width,
+        pt.y / canvas.height
+      ]);
+
+      const newZoneData = {
+        camera_id: camera.id,
+        name: `ZONE-${zones.length + 1}`,
+        zone_type: selectedZoneType,
+        is_active: true,
+        polygon: normalizedPoints,
+        config_json: {
+          shape: 'polygon'
+        }
+      };
+
+      createZoneMutation.mutate(newZoneData);
+      setPolyPoints([]);
+      return;
+    }
+
+    if (!startPos || !currentPos) return;
+
     const normX = startPos.x / canvas.width;
     const normY = startPos.y / canvas.height;
     const normW = (currentPos.x - startPos.x) / canvas.width;
@@ -180,7 +317,7 @@ const ZoneManagerModal = ({ isOpen, onClose, camera }) => {
     const newZoneData = {
       camera_id: camera.id,
       name: `ZONE-${zones.length + 1}`,
-      zone_type: 'exclusion',
+      zone_type: selectedZoneType,
       is_active: true,
       config_json: {
         shape: drawingMode,
@@ -194,6 +331,34 @@ const ZoneManagerModal = ({ isOpen, onClose, camera }) => {
     };
 
     createZoneMutation.mutate(newZoneData);
+  };
+
+  const finalizePolygon = () => {
+    if (polyPoints.length < 3) {
+      toast.error('Tactical perimeter requires at least 3 vectors');
+      return;
+    }
+
+    const canvas = canvasRef.current;
+    const normalizedPoints = polyPoints.map(pt => [
+      pt.x / canvas.width,
+      pt.y / canvas.height
+    ]);
+
+    const newZoneData = {
+      camera_id: camera.id,
+      name: `ZONE-${zones.length + 1}`,
+      zone_type: selectedZoneType,
+      is_active: true,
+      polygon: normalizedPoints,
+      config_json: {
+        shape: 'polygon'
+      }
+    };
+
+    createZoneMutation.mutate(newZoneData);
+    setPolyPoints([]);
+    setIsDrawing(false);
   };
 
   if (!isOpen) return null;
@@ -250,6 +415,34 @@ const ZoneManagerModal = ({ isOpen, onClose, camera }) => {
                 <p className="text-neutral-500 text-[10px] font-black uppercase tracking-widest">{camera?.name} &bull; Coordinate Mapping</p>
               </div>
             </div>
+
+            {/* Drawing Feedback HUD */}
+            {drawingMode !== 'none' && currentPos && (
+              <div 
+                className="absolute z-30 pointer-events-none bg-black/60 backdrop-blur-md border border-white/10 p-2 rounded-lg"
+                style={{ 
+                  left: currentPos.x + 15, 
+                  top: currentPos.y + 15,
+                  display: isDrawing || drawingMode === 'polygon' || drawingMode === 'freehand' ? 'block' : 'none'
+                }}
+              >
+                <div className="flex flex-col space-y-1">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-[8px] font-black text-neutral-500 uppercase">X:</span>
+                    <span className="text-[9px] font-mono text-blue-400">{(currentPos.x / 12.8).toFixed(1)}%</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-[8px] font-black text-neutral-500 uppercase">Y:</span>
+                    <span className="text-[9px] font-mono text-blue-400">{(currentPos.y / 7.2).toFixed(1)}%</span>
+                  </div>
+                  {drawingMode === 'polygon' && (
+                    <div className="pt-1 border-t border-white/5 mt-1">
+                      <span className="text-[8px] font-black text-amber-500 uppercase">Vectors: {polyPoints.length + 1}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -263,6 +456,26 @@ const ZoneManagerModal = ({ isOpen, onClose, camera }) => {
           </header>
 
           <div className="p-6 space-y-6 flex-1 overflow-y-auto custom-scrollbar">
+            {/* Zone Type Selection */}
+            <div className="space-y-3">
+              <p className="text-[9px] font-black text-neutral-600 uppercase tracking-widest">Zone Type</p>
+              <div className="flex bg-neutral-900/50 rounded-2xl p-1 border border-white/5">
+                {[
+                  { value: 'exclusion', label: 'Exclusion', color: 'bg-red-600 shadow-[0_0_15px_rgba(239,68,68,0.3)]' },
+                  { value: 'counting', label: 'Counting', color: 'bg-blue-600 shadow-[0_0_15px_rgba(59,130,246,0.3)]' },
+                  { value: 'alert', label: 'Alert', color: 'bg-amber-600 shadow-[0_0_15px_rgba(217,119,6,0.3)]' }
+                ].map(type => (
+                  <button
+                    key={type.value}
+                    onClick={() => setSelectedZoneType(type.value)}
+                    className={`flex-1 py-2 text-[9px] font-black uppercase tracking-widest rounded-xl transition-all ${selectedZoneType === type.value ? `${type.color} text-white` : 'text-neutral-500 hover:text-white'}`}
+                  >
+                    {type.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Tool Selection */}
             <div className="space-y-3">
               <p className="text-[9px] font-black text-neutral-600 uppercase tracking-widest">Drawing Tools</p>
@@ -282,13 +495,43 @@ const ZoneManagerModal = ({ isOpen, onClose, camera }) => {
                   <span className="text-[8px] font-bold uppercase">Square</span>
                 </button>
                 <button 
-                  onClick={() => setDrawingMode('circle')}
+                  onClick={() => { setDrawingMode('circle'); setPolyPoints([]); }}
                   className={`flex flex-col items-center justify-center p-3 rounded-2xl border transition-all ${drawingMode === 'circle' ? 'bg-blue-600 border-blue-500 text-white shadow-lg' : 'bg-neutral-900 border-white/5 text-neutral-500 hover:text-white'}`}
                 >
                   <Circle className="w-5 h-5 mb-1" />
                   <span className="text-[8px] font-bold uppercase">Circle</span>
                 </button>
+                <button 
+                  onClick={() => { setDrawingMode('polygon'); setPolyPoints([]); }}
+                  className={`flex flex-col items-center justify-center p-3 rounded-2xl border transition-all ${drawingMode === 'polygon' ? 'bg-blue-600 border-blue-500 text-white shadow-lg' : 'bg-neutral-900 border-white/5 text-neutral-500 hover:text-white'}`}
+                >
+                  <Hexagon className="w-5 h-5 mb-1" />
+                  <span className="text-[8px] font-bold uppercase">Polygon</span>
+                </button>
+                <button 
+                  onClick={() => { setDrawingMode('freehand'); setPolyPoints([]); }}
+                  className={`col-span-2 flex flex-col items-center justify-center p-3 rounded-2xl border transition-all ${drawingMode === 'freehand' ? 'bg-blue-600 border-blue-500 text-white shadow-lg' : 'bg-neutral-900 border-white/5 text-neutral-500 hover:text-white'}`}
+                >
+                  <Pencil className="w-5 h-5 mb-1" />
+                  <span className="text-[8px] font-bold uppercase">Freehand</span>
+                </button>
               </div>
+              {drawingMode === 'polygon' && polyPoints.length > 0 && (
+                <div className="flex space-x-2 mt-2">
+                  <button 
+                    onClick={finalizePolygon}
+                    className="flex-1 py-2 bg-green-600 text-white text-[8px] font-bold uppercase rounded-xl hover:bg-green-500"
+                  >
+                    Finish Polygon
+                  </button>
+                  <button 
+                    onClick={() => setPolyPoints([])}
+                    className="px-3 py-2 bg-red-600/20 text-red-400 text-[8px] font-bold uppercase rounded-xl hover:bg-red-600/30"
+                  >
+                    Reset
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Zones List */}

@@ -86,6 +86,7 @@ class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
         self.camera_subscriptions: dict = {}  # camera_id -> list of connections
+        self.global_subscribers: List[WebSocket] = []  # receive ALL events
 
     async def connect(self, websocket: WebSocket, camera_id: Optional[str] = None):
         await websocket.accept()
@@ -96,9 +97,15 @@ class ConnectionManager:
                 self.camera_subscriptions[camera_id] = []
             self.camera_subscriptions[camera_id].append(websocket)
 
+    def subscribe_global(self, websocket: WebSocket):
+        if websocket not in self.global_subscribers:
+            self.global_subscribers.append(websocket)
+
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
-        
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+        if websocket in self.global_subscribers:
+            self.global_subscribers.remove(websocket)
         # Remove from camera subscriptions
         for camera_id, connections in self.camera_subscriptions.items():
             if websocket in connections:
@@ -109,7 +116,21 @@ class ConnectionManager:
 
     async def broadcast(self, message: dict, camera_id: Optional[str] = None):
         message_json = json.dumps(message)
+        is_event = message.get('event_type') is not None
         
+        # Always send events to global subscribers first
+        if is_event and self.global_subscribers:
+            disconnected_globals = []
+            for connection in self.global_subscribers:
+                try:
+                    await connection.send_text(message_json)
+                except:
+                    disconnected_globals.append(connection)
+            for conn in disconnected_globals:
+                self.global_subscribers.remove(conn)
+                if conn in self.active_connections:
+                    self.active_connections.remove(conn)
+
         if camera_id and camera_id in self.camera_subscriptions:
             # Send to specific camera subscribers
             disconnected = []
@@ -126,7 +147,7 @@ class ConnectionManager:
                 self.camera_subscriptions[camera_id].remove(conn)
                 if conn in self.active_connections:
                     self.active_connections.remove(conn)
-        else:
+        elif not camera_id:
             # Broadcast to all connections
             disconnected = []
             for connection in self.active_connections:
@@ -499,6 +520,10 @@ async def websocket_endpoint(websocket: WebSocket, camera_id: Optional[str] = No
                         manager.camera_subscriptions[cam_id] = []
                     if websocket not in manager.camera_subscriptions[cam_id]:
                         manager.camera_subscriptions[cam_id].append(websocket)
+                elif msg.get("type") == "subscribe_global":
+                    # Register this connection to receive ALL events regardless of camera
+                    manager.subscribe_global(websocket)
+                    logger.info("Client subscribed to global event stream")
             except json.JSONDecodeError:
                 pass
     except WebSocketDisconnect:

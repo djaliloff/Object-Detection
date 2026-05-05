@@ -394,8 +394,19 @@ class ModelRegistry:
             
             # Enhanced logging
             tracked_count = sum(1 for d in detections if d.track_id is not None)
+            
+            # Count by class
+            class_counts = defaultdict(int)
+            for d in detections:
+                class_counts[d.class_name] += 1
+            
+            summary = ", ".join([f"{count} {cls}(s)" for cls, count in class_counts.items()])
             device_info = f" ({model_device.upper()})" if model_device == 'cuda' else ""
             tracker_info = "BoT-SORT" if "botsort" in self.tracker_type else "ByteTrack"
+            
+            if summary:
+                logger.info(f"🎯 DETECTED on {frame_data.camera_id}: {summary}")
+                
             logger.debug(
                 f"[{tracker_info}]{device_info} {len(detections)} detections, "
                 f"{tracked_count} tracked in {inference_time*1000:.1f}ms"
@@ -515,19 +526,20 @@ class InferenceEngine:
         logger.info(f"Frame skip: {frame_skip} | Tracker: {tracker_label}")
     
     def _connect_redis(self) -> redis.Redis:
-        """Connect to Redis for frame queue."""
-        try:
-            client = redis.Redis(
-                host=os.getenv("REDIS_HOST", "localhost"),
-                port=int(os.getenv("REDIS_PORT", 6379)),
-                decode_responses=False
-            )
-            client.ping()
-            logger.info("Connected to Redis")
-            return client
-        except Exception as e:
-            logger.error(f"Failed to connect to Redis: {e}")
-            raise
+        """Connect to Redis for frame queue with retry logic."""
+        while True:
+            try:
+                client = redis.Redis(
+                    host=os.getenv("REDIS_HOST", "localhost"),
+                    port=int(os.getenv("REDIS_PORT", 6379)),
+                    decode_responses=False
+                )
+                client.ping()
+                logger.info("Connected to Redis")
+                return client
+            except Exception as e:
+                logger.error(f"Failed to connect to Redis (retrying in 5s): {e}")
+                time.sleep(5)
     
     def _deserialize_frame(self, frame_data: bytes) -> FrameData:
         """Deserialize frame data from Redis."""
@@ -603,12 +615,30 @@ class InferenceEngine:
         # Count unique track IDs
         active_track_ids = [d['track_id'] for d in detection_list if d['track_id'] is not None]
         
+        # Save a snapshot of the frame for alerts if detections exist
+        snapshot_rel_path = None
+        if detection_list:
+            try:
+                # Save snapshot to the backend-api/uploads folder so it can be served statically
+                snapshot_dir = os.path.join(os.getcwd(), "..", "backend-api", "uploads", "snapshots")
+                os.makedirs(snapshot_dir, exist_ok=True)
+                
+                snapshot_filename = f"snap_{frame_data.camera_id}_{int(time.time() * 1000)}.jpg"
+                snapshot_path = os.path.join(snapshot_dir, snapshot_filename)
+                
+                # Save JPEG with decent quality
+                cv2.imwrite(snapshot_path, frame_data.image_data, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                snapshot_rel_path = f"/uploads/snapshots/{snapshot_filename}"
+            except Exception as e:
+                logger.error(f"Failed to save snapshot: {e}")
+
         result = {
             'camera_id': frame_data.camera_id,
             'frame_id': frame_data.frame_id,
             'timestamp': frame_data.timestamp.isoformat(),
             'modality': frame_data.modality,
             'detections': detection_list,
+            'snapshot_path': snapshot_rel_path,
             'frame_info': {
                 'width': w,
                 'height': h,
@@ -707,6 +737,13 @@ class InferenceEngine:
     async def _process_single_camera(self, cam_id: str, frame: FrameData):
         """Process a single camera frame with MOT tracking."""
         try:
+            # Check if detection is enabled for this camera
+            detection_enabled = frame.metadata.get('detection_enabled', True)
+            if not detection_enabled:
+                logger.debug(f"Detection disabled for camera {cam_id}, skipping")
+                return
+            
+            logger.info(f"🔍 Processing frame for camera: {cam_id}")
             start_time = time.time()
             
             # ═══════════════════════════════════════════════════════════

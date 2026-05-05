@@ -4,6 +4,9 @@ import time
 import asyncio
 import threading
 import base64
+import sys
+import urllib.request
+import queue
 import numpy as np
 import cv2
 import redis
@@ -33,6 +36,7 @@ class CameraConfig:
     modality: str = "rgb"  # rgb, thermal, rgb_t
     fps_target: int = 30
     enabled: bool = True
+    detection_enabled: bool = True
     mjpeg_url: Optional[str] = None
     hls_url: Optional[str] = None
     stream_url: Optional[str] = None
@@ -82,61 +86,69 @@ class RTSPCameraAdapter(CameraAdapter):
         self.connection_attempts = 0
         self.max_connection_attempts = 5
         self.reconnect_delay = 5  # seconds
+        self.frame_queue = queue.Queue(maxsize=2)
+        self.running = False
+        self.capture_thread = None
     
     async def connect(self) -> bool:
         """Connect to RTSP camera."""
+        if self.running:
+            return True
+            
         try:
             # Build RTSP URL with credentials if provided
             rtsp_url = self.config.rtsp_url
             if self.config.username and self.config.password:
-                # Insert credentials into URL
                 if "://" in rtsp_url:
                     protocol, rest = rtsp_url.split("://", 1)
                     rtsp_url = f"{protocol}://{self.config.username}:{self.config.password}@{rest}"
             
-            # Bypass GStreamer pipeline entirely for direct HTTP streams (like IP Webcam)
             if rtsp_url.startswith('http'):
                 logger.info(f"Opening HTTP/MJPEG stream for camera {self.config.id}: {rtsp_url}")
                 self.cap = cv2.VideoCapture(rtsp_url)
-                # Set timeout for HTTP streams if supported by OpenCV version
                 self.cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
             else:
                 try:
-                    # Try GStreamer pipeline first for RTSP
-                    logger.info(f"Attempting GStreamer for RTSP camera {self.config.id}")
                     pipeline = f"rtspsrc location={rtsp_url} latency=100 ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! appsink"
                     self.cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-                    
                     if not self.cap.isOpened():
-                        logger.info(f"GStreamer failed, falling back to FFmpeg/Direct for camera {self.config.id}")
                         self.cap = cv2.VideoCapture(rtsp_url)
-                except Exception as e:
-                    logger.warning(f"GStreamer initialization error: {e}, falling back to standard OpenCV")
+                except Exception:
                     self.cap = cv2.VideoCapture(rtsp_url)
             
             if not self.cap.isOpened():
-                logger.error(f"[ERROR] Failed to open stream for camera {self.config.id}")
                 return False
+                
+            self.running = True
+            self.capture_thread = threading.Thread(target=self._capture_thread_run, daemon=True)
+            self.capture_thread.start()
             
-            # Test read a frame
-            ret, frame = self.cap.read()
-            if not ret or frame is None:
-                logger.error(f"[ERROR] Connected but failed to read initial frame from camera {self.config.id}")
-                self.cap.release()
-                self.cap = None
-                return False
-            
-            self.connection_attempts = 0
-            logger.info(f"[SUCCESS] Successfully connected and validated camera {self.config.id}")
+            logger.info(f"[SUCCESS] Successfully started capture thread for camera {self.config.id}")
             return True
-            
         except Exception as e:
             logger.error(f"Error connecting to RTSP camera {self.config.id}: {e}")
-            self.connection_attempts += 1
             return False
-    
+
+    def _capture_thread_run(self):
+        while self.running:
+            if not self.cap or not self.cap.isOpened():
+                time.sleep(0.1)
+                continue
+            ret, frame = self.cap.read()
+            if ret and frame is not None:
+                if self.frame_queue.full():
+                    try:
+                        self.frame_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                self.frame_queue.put(frame)
+            else:
+                time.sleep(0.01)
+
     async def disconnect(self):
-        """Disconnect from RTSP camera."""
+        self.running = False
+        if self.capture_thread:
+            self.capture_thread.join(timeout=1.0)
         if self.cap:
             self.cap.release()
             self.cap = None
@@ -144,22 +156,17 @@ class RTSPCameraAdapter(CameraAdapter):
     
     async def get_frame(self) -> tuple[Optional[np.ndarray], Optional[FrameMetadata]]:
         """Get a frame from RTSP camera."""
-        if not self.cap or not self.cap.isOpened():
+        if not self.running:
             return None, None
         
         try:
-            ret, frame = self.cap.read()
-            if not ret or frame is None:
-                logger.warning(f"Failed to read frame from camera {self.config.id}")
+            try:
+                frame = self.frame_queue.get_nowait()
+            except queue.Empty:
                 return None, None
-            
+                
             self.frame_count += 1
             current_time = time.time()
-            prev_time = getattr(self, 'last_frame_time', current_time - 0.033)
-            delta = current_time - prev_time
-            if delta <= 0:
-                delta = 0.033  # fallback 30fps
-            self.last_frame_time = current_time
             
             metadata = FrameMetadata(
                 camera_id=self.config.id,
@@ -169,7 +176,6 @@ class RTSPCameraAdapter(CameraAdapter):
                 resolution=frame.shape[:2],
                 frame_number=self.frame_count,
                 metadata={
-                    'fps_actual': 1.0 / delta,
                     'connection_attempts': self.connection_attempts
                 }
             )
@@ -229,6 +235,97 @@ class ThermalCameraAdapter(CameraAdapter):
     def is_connected(self) -> bool:
         """Check if thermal camera is connected."""
         return True  # Placeholder
+
+class MJPEGCameraAdapter(CameraAdapter):
+    """Robust MJPEG over HTTP camera adapter using urllib."""
+    
+    def __init__(self, config: CameraConfig):
+        self.config = config
+        self.stream = None
+        self.frame_count = 0
+        self.last_frame_time = time.time()
+        self.frame_queue = queue.Queue(maxsize=2)
+        self.running = False
+        self.capture_thread = None
+        
+    async def connect(self) -> bool:
+        """Connect to MJPEG stream."""
+        if self.running:
+            return True
+        try:
+            logger.info(f"Connecting to MJPEG stream: {self.config.rtsp_url}")
+            self.stream = urllib.request.urlopen(self.config.rtsp_url, timeout=10)
+            self.running = True
+            self.capture_thread = threading.Thread(target=self._capture_thread_run, daemon=True)
+            self.capture_thread.start()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to connect to MJPEG stream {self.config.id}: {e}")
+            return False
+            
+    def _capture_thread_run(self):
+        bytes_data = b''
+        while self.running and self.stream:
+            try:
+                chunk = self.stream.read(8192)
+                if not chunk:
+                    break
+                bytes_data += chunk
+                a = bytes_data.find(b'\xff\xd8')
+                b = bytes_data.find(b'\xff\xd9')
+                if a != -1 and b != -1:
+                    jpg = bytes_data[a:b+2]
+                    bytes_data = bytes_data[b+2:]
+                    frame = cv2.imdecode(np.frombuffer(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
+                    if frame is not None:
+                        if self.frame_queue.full():
+                            try:
+                                self.frame_queue.get_nowait()
+                            except queue.Empty:
+                                pass
+                        self.frame_queue.put(frame)
+            except Exception as e:
+                logger.error(f"MJPEG thread error: {e}")
+                time.sleep(1)
+
+    async def disconnect(self):
+        self.running = False
+        if self.capture_thread:
+            self.capture_thread.join(timeout=1.0)
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+            
+    async def get_frame(self) -> tuple[Optional[np.ndarray], Optional[FrameMetadata]]:
+        if not self.running:
+            return None, None
+            
+        try:
+            try:
+                frame = self.frame_queue.get_nowait()
+            except queue.Empty:
+                return None, None
+                
+            self.frame_count += 1
+            current_time = time.time()
+            metadata = FrameMetadata(
+                camera_id=self.config.id,
+                frame_id=f"{self.config.id}_{int(current_time * 1000)}_{self.frame_count}",
+                timestamp=datetime.now(),
+                modality=self.config.modality,
+                resolution=frame.shape[:2],
+                frame_number=self.frame_count,
+                metadata={
+                    'detection_enabled': self.config.detection_enabled
+                }
+            )
+            return frame, metadata
+        except Exception as e:
+            logger.error(f"Error getting MJPEG frame {self.config.id}: {e}")
+            return None, None
+            
+    def is_connected(self) -> bool:
+        return self.running and self.stream is not None
 
 class VideoFileCameraAdapter(CameraAdapter):
     """Camera adapter for looped video files."""
@@ -335,11 +432,13 @@ class CameraManager:
         """Add a camera to the manager."""
         self.camera_configs[config.id] = config
         
-        # Create appropriate adapter based on modality
+        # Create appropriate adapter based on modality and URL
         if config.modality == "thermal":
             adapter = ThermalCameraAdapter(config)
         elif config.modality == "video":
             adapter = VideoFileCameraAdapter(config)
+        elif config.rtsp_url.startswith('http'):
+            adapter = MJPEGCameraAdapter(config)
         else:
             adapter = RTSPCameraAdapter(config)
         
@@ -381,9 +480,9 @@ class CameraManager:
             await self.cameras[camera_id].disconnect()
     
     async def connect_all_cameras(self):
-        """Connect all cameras."""
-        for camera_id in self.cameras:
-            await self.connect_camera(camera_id)
+        """Connect all cameras in parallel."""
+        tasks = [self.connect_camera(camera_id) for camera_id in self.cameras]
+        await asyncio.gather(*tasks, return_exceptions=True)
     
     async def disconnect_all_cameras(self):
         """Disconnect all cameras."""
@@ -408,7 +507,10 @@ class CameraManager:
                 'modality': metadata.modality,
                 'resolution': list(metadata.resolution),
                 'frame_number': metadata.frame_number,
-                'metadata': metadata.metadata,
+                'metadata': {
+                    **metadata.metadata,
+                    'detection_enabled': getattr(self.camera_configs.get(metadata.camera_id), 'detection_enabled', True)
+                },
                 'image_data': frame_b64
             }
             
@@ -591,37 +693,49 @@ if __name__ == "__main__":
     gateway = CameraGateway()
     
     # Load cameras from database
-    db = SessionLocal()
-    try:
-        from models import Camera
-        cameras = db.query(Camera).filter(Camera.status == 'online').all()
-        for c in cameras:
-            # For MJPEG streams, prioritize the mjpeg parameter if available in the database config block
-            rtsp = c.rtsp_url
-            if c.config_json and "stream_url" in c.config_json:
-                rtsp = c.config_json["stream_url"]
+    while True:
+        db = SessionLocal()
+        try:
+            from models import Camera
+            cameras = db.query(Camera).filter(Camera.status == 'online').all()
+            for c in cameras:
+                # Prioritize a working capture URL
+                # Order: config_json.stream_url > config_json.mjpeg_url > mjpeg_url > rtsp_url
+                capture_url = c.rtsp_url
+                
+                if c.config_json:
+                    if "stream_url" in c.config_json:
+                        capture_url = c.config_json["stream_url"]
+                    elif "mjpeg_url" in c.config_json:
+                        capture_url = c.config_json["mjpeg_url"]
+                
+                if not capture_url and c.mjpeg_url:
+                    capture_url = c.mjpeg_url
 
-            config = CameraConfig(
-                id=str(c.id),
-                name=c.name,
-                ip=c.ip,
-                port=c.port,
-                rtsp_url=rtsp,
-                username=None,
-                password=None,
-                modality=c.modality,
-                fps_target=c.fps or 15,
-                enabled=c.is_active if c.is_active is not None else True,
-                mjpeg_url=c.mjpeg_url,
-                hls_url=c.hls_url,
-                stream_url=c.stream_url
-            )
-            gateway.camera_manager.add_camera(config)
-            logger.info(f"Loaded database camera: {config.name} at {config.rtsp_url}")
-    except Exception as e:
-        logger.error(f"Failed to load cameras from DB: {e}")
-    finally:
-        db.close()
+                config = CameraConfig(
+                    id=str(c.id),
+                    name=c.name,
+                    ip=c.ip,
+                    port=c.port,
+                    rtsp_url=capture_url, # Use the best available URL for capture
+                    username=None,
+                    password=None,
+                    modality=c.modality,
+                    fps_target=c.fps or 15,
+                    enabled=c.is_active if c.is_active is not None else True,
+                    detection_enabled=c.detection_enabled if hasattr(c, 'detection_enabled') else True,
+                    mjpeg_url=c.mjpeg_url,
+                    hls_url=c.hls_url,
+                    stream_url=c.stream_url
+                )
+                gateway.camera_manager.add_camera(config)
+                logger.info(f"Loaded camera: {config.name} | Capture URL: {capture_url} | Detection: {config.detection_enabled}")
+            break
+        except Exception as e:
+            logger.error(f"Failed to load cameras from DB (retrying in 5s): {e}")
+            time.sleep(5)
+        finally:
+            db.close()
     
     try:
         asyncio.run(gateway.start())

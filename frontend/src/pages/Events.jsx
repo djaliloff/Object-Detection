@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { 
   Bell, 
   Search, 
@@ -25,6 +25,24 @@ const Events = () => {
     queryFn: () => eventsAPI.getEvents(),
     refetchInterval: 10000,
   });
+
+  const queryClient = useQueryClient();
+
+  const updateStatusMutation = useMutation({
+    mutationFn: ({ id, status }) => eventsAPI.updateEventStatus(id, status),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['events'] });
+    },
+    onError: (err) => {
+      console.error('Failed to update event status:', err);
+    }
+  });
+
+  const handleEventClick = (event) => {
+    if (event.status === 'new') {
+      updateStatusMutation.mutate({ id: event.id, status: 'viewed' });
+    }
+  };
 
   const filteredEvents = useMemo(() => {
     if (!Array.isArray(events)) return [];
@@ -171,7 +189,7 @@ const Events = () => {
                   <p className="text-[10px] font-black text-neutral-600 uppercase tracking-widest">Synchronizing Logs...</p>
                 </div>
               ) : (
-                <EventTimeline events={filteredEvents} />
+                <EventTimeline events={filteredEvents} onEventClick={handleEventClick} />
               )}
             </div>
           </div>

@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from collections import defaultdict, deque
-from shapely.geometry import Point, Polygon, LineString
+from shapely.geometry import Point, Polygon, LineString, box
 from shapely.ops import nearest_points
 import uuid
 from dotenv import load_dotenv
@@ -18,7 +18,7 @@ from notification_service import notification_service
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "backend-api"))
 from database import SessionLocal
-from models import Zone as DBZone, Line as DBLine, Camera as DBCamera
+from models import Zone as DBZone, Camera as DBCamera, Event as DBEvent
 
 # Load environment variables from the root .env file
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -59,6 +59,7 @@ class Track:
     age: int = 0
     hits: int = 0
     trajectory: List[Tuple[float, float]] = field(default_factory=list)
+    bbox: List[float] = field(default_factory=list) # [x1, y1, x2, y2] normalized
 
 @dataclass
 class Zone:
@@ -77,25 +78,49 @@ class Zone:
             self.shapely_polygon = Polygon(self.polygon)
             
     def contains(self, point: Point) -> bool:
-        """Check if a point is within the zone based on its shape configuration."""
-        if not self.is_active:
-            return False
-            
+        """Check if a point is within the zone."""
+        if not self.is_active: return False
         shape = self.config.get('shape', 'polygon')
-        
         if shape == 'circle':
-            center = self.config.get('center', [0, 0]) # Normalized [x, y]
-            radius = self.config.get('radius', 0)     # Normalized radius
+            center = self.config.get('center', [0, 0])
+            radius = self.config.get('radius', 0)
             dist = math.sqrt((point.x - center[0])**2 + (point.y - center[1])**2)
             return dist <= radius
         elif shape in ['square', 'rectangle']:
-            rect = self.config.get('rect', [0, 0, 0, 0]) # [x, y, w, h]
+            rect = self.config.get('rect', [0, 0, 0, 0])
             x, y, w, h = rect
-            return x <= point.x <= x + w and y <= point.y <= y + h
+            x_min, x_max = min(x, x + w), max(x, x + w)
+            y_min, y_max = min(y, y + h), max(y, y + h)
+            return x_min <= point.x <= x_max and y_min <= point.y <= y_max
         else:
-            # Default to polygon
-            if self.shapely_polygon:
+            if self.shapely_polygon and self.shapely_polygon.is_valid: 
                 return self.shapely_polygon.contains(point)
+        return False
+
+    def intersects_bbox(self, bbox: List[float]) -> bool:
+        """Check if a bounding box [x1, y1, x2, y2] intersects the zone."""
+        if not self.is_active or not bbox or len(bbox) < 4: return False
+        
+        # Create a shapely box for the detection
+        det_box = box(bbox[0], bbox[1], bbox[2], bbox[3])
+        
+        shape = self.config.get('shape', 'polygon')
+        if shape == 'circle':
+            # Approximate circle intersection
+            center = self.config.get('center', [0, 0])
+            radius = self.config.get('radius', 0)
+            circle_poly = Point(center[0], center[1]).buffer(radius)
+            return circle_poly.intersects(det_box)
+        elif shape in ['square', 'rectangle']:
+            rect = self.config.get('rect', [0, 0, 0, 0])
+            x, y, w, h = rect
+            x_min, x_max = min(x, x + w), max(x, x + w)
+            y_min, y_max = min(y, y + h), max(y, y + h)
+            zone_box = box(x_min, y_min, x_max, y_max)
+            return zone_box.intersects(det_box)
+        else:
+            if self.shapely_polygon and self.shapely_polygon.is_valid:
+                return self.shapely_polygon.intersects(det_box)
         return False
 
 @dataclass
@@ -153,12 +178,33 @@ class MOTTrackManager:
         """
         current_time = datetime.now()
         active_track_ids = set()
+        ephemeral_tracks = []  # Not stored between frames
         
-        for det in detections:
-            if det.track_id is None or det.track_id < 0:
+        for i, det in enumerate(detections):
+            tid = det.track_id
+            
+            # Untracked object — build a one-shot ephemeral track, don't store it
+            if tid is None or tid < 0:
+                center = det.center if det.center else (
+                    (det.bbox[0] + det.bbox[2]) / 2.0,
+                    (det.bbox[1] + det.bbox[3]) / 2.0
+                )
+                ephemeral_track = Track(
+                    id=-1000 - i,
+                    camera_id=camera_id,
+                    object_class=det.object_class,
+                    first_seen=current_time,
+                    last_seen=current_time,
+                    positions=[(center[0], center[1], current_time)],
+                    confidence_avg=det.confidence,
+                    length=1,
+                    age=0,
+                    hits=0,
+                    bbox=det.bbox,
+                )
+                ephemeral_tracks.append(ephemeral_track)
                 continue
             
-            tid = det.track_id
             active_track_ids.add(tid)
             
             center = det.center if det.center else (
@@ -171,6 +217,7 @@ class MOTTrackManager:
                 track = self.tracks[camera_id][tid]
                 track.last_seen = current_time
                 track.length += 1
+                track.bbox = det.bbox # Latest bbox
                 track.confidence_avg = (
                     (track.confidence_avg * (track.length - 1) + det.confidence) / track.length
                 )
@@ -199,7 +246,7 @@ class MOTTrackManager:
                     track.trajectory = [(p[0], p[1]) for p in det.trajectory]
                 
             else:
-                # New track
+                # New tracked object
                 track = Track(
                     id=tid,
                     camera_id=camera_id,
@@ -211,6 +258,7 @@ class MOTTrackManager:
                     length=1,
                     age=det.age,
                     hits=det.hits,
+                    bbox=det.bbox,
                 )
                 if det.velocity:
                     track.velocity = (det.velocity.get('vx', 0), det.velocity.get('vy', 0))
@@ -230,7 +278,9 @@ class MOTTrackManager:
         for tid in stale:
             del self.tracks[camera_id][tid]
         
-        return list(self.tracks[camera_id].values())
+        # Return persistent tracks + ephemeral one-shot tracks
+        return list(self.tracks[camera_id].values()) + ephemeral_tracks
+
 
 # ─── Event Detectors ─────────────────────────────────────────────────────────
 
@@ -239,11 +289,17 @@ class IntrusionDetector:
     
     def __init__(self):
         self.active_intrusions: Dict[str, Event] = {}
+        self.last_ephemeral_alert: Dict[str, float] = {}
+        self.history_alerted_tracks: set = set() # (camera_id, track_id, zone_id)
     
-    def detect_intrusion(self, track: Track, zones: List[Zone]) -> List[Event]:
+    def detect_intrusion(self, track: Track, zones: List[Zone], snapshot_path: str = None) -> List[Event]:
         events = []
         
         if not track.positions:
+            return events
+            
+        # Only trigger intrusion alerts for people
+        if track.object_class.lower() != "person":
             return events
         
         current_pos = track.positions[-1][:2]
@@ -253,30 +309,49 @@ class IntrusionDetector:
             if zone.zone_type != "exclusion":
                 continue
             
-            is_in_zone = zone.contains(current_point)
+            # Sensitive detection: if any part of the bbox is in the zone, it's an intrusion
+            is_in_zone = zone.intersects_bbox(track.bbox)
             intrusion_key = f"{track.camera_id}_{track.id}_{zone.id}"
             
-            if is_in_zone and intrusion_key not in self.active_intrusions:
-                event = Event(
-                    id=str(uuid.uuid4()),
-                    event_type="intrusion",
-                    camera_id=track.camera_id,
-                    track_id=track.id,
-                    start_time=track.last_seen,
-                    end_time=None,
-                    severity="medium",
-                    zone_id=zone.id,
-                    event_data={
-                        "object_class": track.object_class,
-                        "zone_name": zone.name,
-                        "entry_point": current_pos,
-                        "confidence": track.confidence_avg,
-                        "track_age": track.age,
-                        "track_hits": track.hits,
-                    }
-                )
-                self.active_intrusions[intrusion_key] = event
-                events.append(event)
+            if is_in_zone:
+                is_ephemeral = track.id < -500
+                should_alert = False
+                
+                if is_ephemeral:
+                    # Throttle ephemeral alerts to 1 per second per zone
+                    ephemeral_key = f"{track.camera_id}_{zone.id}"
+                    now = time.time()
+                    if now - self.last_ephemeral_alert.get(ephemeral_key, 0) > 1.0:
+                        self.last_ephemeral_alert[ephemeral_key] = now
+                        should_alert = True
+                elif intrusion_key not in self.active_intrusions and (track.camera_id, track.id, zone.id) not in self.history_alerted_tracks:
+                    should_alert = True
+                    self.history_alerted_tracks.add((track.camera_id, track.id, zone.id))
+
+                if should_alert:
+                    event = Event(
+                        id=str(uuid.uuid4()),
+                        event_type="intrusion",
+                        camera_id=track.camera_id,
+                        track_id=track.id,
+                        start_time=track.last_seen,
+                        end_time=None,
+                        severity="medium",
+                        zone_id=zone.id,
+                        event_data={
+                            "object_class": track.object_class,
+                            "zone_name": zone.name,
+                            "entry_point": current_pos,
+                            "confidence": track.confidence_avg,
+                            "track_age": track.age,
+                            "track_hits": track.hits,
+                            "is_ephemeral": is_ephemeral,
+                        },
+                        snapshot_refs={"frame": snapshot_path} if snapshot_path else None
+                    )
+                    if not is_ephemeral:
+                        self.active_intrusions[intrusion_key] = event
+                    events.append(event)
                 
             elif not is_in_zone and intrusion_key in self.active_intrusions:
                 event = self.active_intrusions[intrusion_key]
@@ -293,7 +368,7 @@ class LoiteringDetector:
     def __init__(self):
         self.loitering_tracks: Dict[str, Dict] = {}
     
-    def detect_loitering(self, track: Track, zones: List[Zone]) -> List[Event]:
+    def detect_loitering(self, track: Track, zones: List[Zone], snapshot_path: str = None) -> List[Event]:
         events = []
         
         if not track.positions:
@@ -359,7 +434,8 @@ class LoiteringDetector:
                                 "confidence": track.confidence_avg,
                                 "track_age": track.age,
                                 "track_hits": track.hits,
-                            }
+                            },
+                            snapshot_refs={"frame": snapshot_path} if snapshot_path else None
                         )
                         
                         loitering_data["event_created"] = True
@@ -376,7 +452,7 @@ class LineCrossingDetector:
     def __init__(self):
         self.crossing_memory: Dict[str, List] = {}
     
-    def detect_line_crossing(self, track: Track, lines: List[Line]) -> List[Event]:
+    def detect_line_crossing(self, track: Track, lines: List[Line], snapshot_path: str = None) -> List[Event]:
         events = []
         
         if not track.positions:
@@ -427,7 +503,8 @@ class LineCrossingDetector:
                                 "direction": direction,
                                 "confidence": track.confidence_avg,
                                 "track_age": track.age,
-                            }
+                            },
+                            snapshot_refs={"frame": snapshot_path} if snapshot_path else None
                         )
                         events.append(event)
             
@@ -443,10 +520,10 @@ class AbandonedObjectDetector:
         self.min_area = min_area
         self.static_objects: Dict[str, Dict] = {}  # track_key -> {first_seen, last_pos, event_created}
     
-    def detect_abandoned(self, track: Track) -> List[Event]:
+    def detect_abandoned(self, track: Track, snapshot_path: str = None) -> List[Event]:
         events = []
         
-        if track.object_class == "person":
+        if track.object_class not in ["suitcase", "handbag", "backpack"]:
             return events
         
         if not track.positions or len(track.positions) < 2:
@@ -490,7 +567,8 @@ class AbandonedObjectDetector:
                             "position": current_pos,
                             "confidence": track.confidence_avg,
                             "track_age": track.age,
-                        }
+                        },
+                        snapshot_refs={"frame": snapshot_path} if snapshot_path else None
                     )
                     self.static_objects[track_key]["event_created"] = True
                     events.append(event)
@@ -512,7 +590,7 @@ class SpeedAnomalyDetector:
         self.max_speed = max_speed
         self.alerted_tracks: set = set()  # track_key -> already alerted
     
-    def detect_speed_anomaly(self, track: Track) -> List[Event]:
+    def detect_speed_anomaly(self, track: Track, snapshot_path: str = None) -> List[Event]:
         events = []
         
         if track.velocity is None:
@@ -563,7 +641,7 @@ class EventProcessor:
         self.intrusion_detector = IntrusionDetector()
         self.loitering_detector = LoiteringDetector()
         self.line_crossing_detector = LineCrossingDetector()
-        self.abandoned_detector = AbandonedObjectDetector(min_duration_seconds=60.0)
+        self.abandoned_detector = AbandonedObjectDetector(min_duration_seconds=180.0)
         self.speed_detector = SpeedAnomalyDetector(max_speed=0.5)
         
         self.running = False
@@ -576,23 +654,24 @@ class EventProcessor:
         }
     
     def _connect_redis(self) -> redis.Redis:
-        try:
-            client = redis.Redis(
-                host=os.getenv("REDIS_HOST", "localhost"),
-                port=int(os.getenv("REDIS_PORT", 6379)),
-                decode_responses=False
-            )
-            client.ping()
-            logger.info("Connected to Redis")
-            return client
-        except Exception as e:
-            logger.error(f"Failed to connect to Redis: {e}")
-            raise
+        """Connect to Redis with retry logic."""
+        while True:
+            try:
+                client = redis.Redis(
+                    host=os.getenv("REDIS_HOST", "localhost"),
+                    port=int(os.getenv("REDIS_PORT", 6379)),
+                    decode_responses=False
+                )
+                client.ping()
+                logger.info("Connected to Redis")
+                return client
+            except Exception as e:
+                logger.error(f"Failed to connect to Redis (retrying in 5s): {e}")
+                time.sleep(5)
     
-    def _deserialize_detections(self, detection_data: bytes) -> List[Detection]:
-        """Deserialize detection data from Redis — supports new MOT format."""
+    def _deserialize_detections(self, data: Dict) -> List[Detection]:
+        """Deserialize detection data dictionary — supports new MOT format."""
         try:
-            data = json.loads(detection_data.decode('utf-8'))
             
             detections = []
             for det_data in data.get('detections', []):
@@ -655,7 +734,6 @@ class EventProcessor:
         try:
             db = SessionLocal()
             db_zones = db.query(DBZone).all()
-            db_lines = db.query(DBLine).all()
             
             # Reset internal maps
             self.zones = {}
@@ -678,24 +756,8 @@ class EventProcessor:
                 )
                 self.zones[cam_id].append(zone)
                 
-            for l in db_lines:
-                cam_id = str(l.camera_id)
-                if cam_id not in self.lines:
-                    self.lines[cam_id] = []
-                
-                line = Line(
-                    id=str(l.id),
-                    camera_id=cam_id,
-                    name=l.name,
-                    start_point=l.start_point,
-                    end_point=l.end_point,
-                    direction=l.direction,
-                    config=l.config_json or {}
-                )
-                self.lines[cam_id].append(line)
-                
             db.close()
-            logger.info(f"Synchronized {len(db_zones)} zones and {len(db_lines)} lines from DB")
+            logger.info(f"Synchronized {len(db_zones)} zones from DB")
         except Exception as e:
             logger.error(f"Failed to load zones from database: {e}")
             # Fallback to empty or keep existing
@@ -703,37 +765,46 @@ class EventProcessor:
                 self.zones = {}
                 self.lines = {}
     
-    def _process_detections(self, camera_id: str, detections: List[Detection]) -> List[Event]:
+    def _process_detections(self, camera_id: str, detections: List[Detection], snapshot_path: str = None) -> List[Event]:
         """Process detections with track IDs from AI engine and run event detection."""
         events = []
         
         # Update track manager with AI-engine-assigned track IDs
+        # Ephemeral tracks (ID < 0) are now included
         tracks = self.track_manager.update(camera_id, detections)
         
         # Get zones and lines for this camera
         zones = self.zones.get(camera_id, [])
         lines = self.lines.get(camera_id, [])
         
+        if zones:
+            logger.debug(f"[Zone Check] Camera {camera_id[:8]}: {len(tracks)} tracks vs {len(zones)} zones")
+        
         # Run all event detectors on each track
         for track in tracks:
             # Intrusion detection
-            intrusion_events = self.intrusion_detector.detect_intrusion(track, zones)
-            events.extend(intrusion_events)
+            intrusion_events = self.intrusion_detector.detect_intrusion(track, zones, snapshot_path=snapshot_path)
+            for event in intrusion_events:
+                logger.warning(f"[INTRUSION] Camera {camera_id[:8]} | Class={track.object_class} | Zone={event.zone_id} | Ephemeral={track.id < -500}")
+                if track.id < -500: # It's a temporary/ephemeral track
+                    event.event_data["is_ephemeral"] = True
+                events.append(event)
+
             
             # Loitering detection
-            loitering_events = self.loitering_detector.detect_loitering(track, zones)
+            loitering_events = self.loitering_detector.detect_loitering(track, zones, snapshot_path=snapshot_path)
             events.extend(loitering_events)
             
             # Line crossing detection
-            crossing_events = self.line_crossing_detector.detect_line_crossing(track, lines)
+            crossing_events = self.line_crossing_detector.detect_line_crossing(track, lines, snapshot_path=snapshot_path)
             events.extend(crossing_events)
             
             # Abandoned object detection (new)
-            abandoned_events = self.abandoned_detector.detect_abandoned(track)
+            abandoned_events = self.abandoned_detector.detect_abandoned(track, snapshot_path=snapshot_path)
             events.extend(abandoned_events)
             
             # Speed anomaly detection (new)
-            speed_events = self.speed_detector.detect_speed_anomaly(track)
+            speed_events = self.speed_detector.detect_speed_anomaly(track, snapshot_path=snapshot_path)
             events.extend(speed_events)
         
         return events
@@ -761,7 +832,9 @@ class EventProcessor:
                     continue
                 
                 start_time = time.time()
-                detections = self._deserialize_detections(detection_data)
+                msg = json.loads(detection_data.decode('utf-8'))
+                detections = self._deserialize_detections(msg)
+                snapshot_path = msg.get('snapshot_path')
                 
                 if not detections:
                     continue
@@ -774,6 +847,28 @@ class EventProcessor:
                     event_data_dict = self._serialize_event_to_dict(event)
                     event_data_bytes = json.dumps(event_data_dict).encode('utf-8')
                     
+                    # Save to DB for persistence and dashboard alerts
+                    try:
+                        db = SessionLocal()
+                        db_event = DBEvent(
+                            id=uuid.UUID(event.id) if isinstance(event.id, str) else event.id,
+                            event_type=event.event_type,
+                            camera_id=uuid.UUID(camera_id) if isinstance(camera_id, str) else camera_id,
+                            track_id=event.track_id,
+                            start_time=event.start_time if isinstance(event.start_time, datetime) else datetime.fromisoformat(event.start_time),
+                            severity=event.severity,
+                            zone_id=uuid.UUID(event.zone_id) if event.zone_id and isinstance(event.zone_id, str) else event.zone_id,
+                            event_data=event.event_data,
+                            status="new",
+                            snapshot_refs=event.snapshot_refs
+                        )
+                        db.add(db_event)
+                        db.commit()
+                        db.close()
+                        logger.debug(f"Event {event.id} persisted to database")
+                    except Exception as db_err:
+                        logger.error(f"Failed to persist event to DB: {db_err}")
+
                     self.redis_client.rpush('event_queue', event_data_bytes)
                     self.redis_client.publish('surveillance_events', event_data_bytes)
                     

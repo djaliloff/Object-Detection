@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { Activity, WifiOff } from 'lucide-react';
+import { Activity, WifiOff, ShieldAlert } from 'lucide-react';
 import BBoxOverlay from './BBoxOverlay.jsx';
+import ZoneOverlay from './ZoneOverlay.jsx';
 import { useAuthStore } from '../stores/authStore';
+import { zonesAPI } from '../utils/api';
 
 /* ── Stream Type Detection ─────────────────────────────────── */
 const isMjpegUrl = (url = '') => {
@@ -26,10 +28,13 @@ const WS_BASE = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${win
 const VideoPlayer = ({ camera, showAI = true, className = "" }) => {
   const { token } = useAuthStore();
   const [detections, setDetections] = useState([]);
+  const [zones, setZones] = useState([]);
+  const [activeAlert, setActiveAlert] = useState(null); // { type, message, timestamp }
   const [wsStatus, setWsStatus] = useState('connecting');
   const [imgError, setImgError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [videoRect, setVideoRect] = useState({ top: 0, left: 0, width: '100%', height: '100%' });
+  const [lastAlertTime, setLastAlertTime] = useState(0);
   const wsRef = useRef(null);
   const reconnectRef = useRef(null);
   const mountedRef = useRef(true);
@@ -109,6 +114,14 @@ const VideoPlayer = ({ camera, showAI = true, className = "" }) => {
           if (msg.type === 'detection' && msg.camera_id === cameraId) {
             console.debug(`[LiveFeed] Detections received for ${cameraId}:`, msg.detections?.length);
             setDetections(msg.detections ?? []);
+          } else if (msg.event_type && msg.camera_id === cameraId) {
+            console.warn(`[LiveFeed] ALERT DETECTED for ${cameraId}:`, msg.event_type);
+            setActiveAlert({
+              type: msg.event_type,
+              message: msg.event_data?.zone_name ? `INTRUSION: ${msg.event_data.zone_name}` : `ALERT: ${msg.event_type}`,
+              timestamp: Date.now()
+            });
+            setLastAlertTime(Date.now());
           }
         } catch (e) { /* ignore */ }
       };
@@ -129,6 +142,8 @@ const VideoPlayer = ({ camera, showAI = true, className = "" }) => {
     mountedRef.current = true;
     if (cameraId) {
       connect();
+      // Fetch zones for persistent display
+      zonesAPI.getZones(cameraId).then(res => setZones(res)).catch(() => {});
     }
     return () => {
       mountedRef.current = false;
@@ -136,6 +151,14 @@ const VideoPlayer = ({ camera, showAI = true, className = "" }) => {
       wsRef.current?.close();
     };
   }, [connect, cameraId]);
+
+  // Clear alert after 5 seconds
+  useEffect(() => {
+    if (activeAlert) {
+      const timer = setTimeout(() => setActiveAlert(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [activeAlert]);
 
   // Check stream_url or fallback fields including nested config objects
   const streamUrl = camera?.stream_url 
@@ -239,10 +262,27 @@ const VideoPlayer = ({ camera, showAI = true, className = "" }) => {
             />
           )}
 
+          {/* ── Zones Overlay (Persistent) ───────────────────────── */}
+          <div className="absolute pointer-events-none z-10" style={videoRect}>
+            <ZoneOverlay zones={zones} />
+          </div>
+
           {/* ── BBox + MOT Tracking Layer ────────────────────────── */}
           {showAI && (
             <div className="absolute pointer-events-none z-20" style={videoRect}>
-              <BBoxOverlay detections={detections} showTrajectory={false} showVelocity={false} />
+              <BBoxOverlay detections={detections} zones={zones} showTrajectory={false} showVelocity={false} />
+            </div>
+          )}
+
+          {/* ── Alert HUD Overlay ────────────────────────────────── */}
+          {activeAlert && (
+            <div className="absolute inset-0 pointer-events-none z-50 flex items-center justify-center">
+              <div className="absolute inset-0 border-[8px] border-red-600/40 animate-pulse shadow-[inset_0_0_100px_rgba(220,38,38,0.4)]" />
+              <div className="bg-red-600/90 backdrop-blur-xl px-8 py-4 rounded-[32px] shadow-2xl flex flex-col items-center animate-in zoom-in-95 slide-in-from-top-10 duration-300">
+                <ShieldAlert className="w-12 h-12 text-white mb-2 animate-bounce" />
+                <span className="text-white text-2xl font-black uppercase tracking-tighter">{activeAlert.message}</span>
+                <span className="text-white/60 text-[10px] font-bold uppercase tracking-widest mt-1">Tactical Intervention Required</span>
+              </div>
             </div>
           )}
         </>
