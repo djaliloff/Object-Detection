@@ -40,6 +40,7 @@ const Dashboard = () => {
     queryKey: ['analytics-summary'],
     queryFn: analyticsAPI.getSummary,
     refetchInterval: 30000,
+    retry: false,
   });
 
   // Fetch recent events
@@ -47,6 +48,7 @@ const Dashboard = () => {
     queryKey: ['recent-events'],
     queryFn: () => eventsAPI.getEvents({ limit: 12, status: 'new' }),
     refetchInterval: 10000,
+    retry: false,
   });
 
   // Fetch cameras
@@ -54,6 +56,7 @@ const Dashboard = () => {
     queryKey: ['cameras'],
     queryFn: camerasAPI.getCameras,
     refetchInterval: 60000,
+    retry: false,
   });
 
   useEffect(() => {
@@ -265,21 +268,7 @@ const Dashboard = () => {
                     </div>
                   </div>
 
-                  {selectedCamera && (
-                    <div className="px-4 pb-4">
-                      <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-                         <CameraControls 
-                          camera={selectedCamera}
-                          isRecording={isRecording}
-                          onToggleRecording={handleToggleRecording}
-                          onTakeSnapshot={handleTakeSnapshot}
-                          onPTZControl={handlePTZControl}
-                          onZoomControl={handleZoomControl}
-                          onOpenSettings={handleOpenSettings}
-                        />
-                      </div>
-                    </div>
-                  )}
+                  
                 </div>
               ) : (
                 <div className="p-6">
@@ -292,36 +281,6 @@ const Dashboard = () => {
               )}
             </div>
 
-            {/* Event Analysis */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="md:col-span-2 bg-neutral-900/40 border border-white/5 rounded-3xl p-6 backdrop-blur-2xl">
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-lg font-bold flex items-center space-x-2">
-                    <Activity className="w-5 h-5 text-blue-400" />
-                    <span>Live Intelligence</span>
-                  </h3>
-                  <button className="text-xs font-bold uppercase tracking-widest text-neutral-500 hover:text-white transition-colors">
-                    View All
-                  </button>
-                </div>
-                <div className="h-64 overflow-hidden relative">
-                   <EventTimeline />
-                </div>
-              </div>
-
-              <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-3xl p-6 shadow-xl shadow-blue-900/20 relative overflow-hidden group">
-                <div className="absolute top-[-20%] right-[-20%] w-64 h-64 bg-white/10 rounded-full blur-3xl group-hover:scale-125 transition-transform duration-700" />
-                <div className="relative z-10 flex flex-col h-full">
-                  <Shield className="w-10 h-10 text-white/40 mb-4" />
-                  <h3 className="text-xl font-black text-white leading-tight mb-2">Secure Export</h3>
-                  <p className="text-white/70 text-sm mb-auto">Generate certified evidence packages with encrypted timestamps and metadata.</p>
-                  <button className="mt-8 flex items-center justify-center space-x-2 bg-white text-blue-600 py-3 rounded-2xl font-bold hover:bg-neutral-100 transition-all shadow-lg active:scale-95">
-                    <Download className="w-5 h-5" />
-                    <span>Archive Data</span>
-                  </button>
-                </div>
-              </div>
-            </div>
           </main>
 
           {/* Neural Feed Sidebar */}

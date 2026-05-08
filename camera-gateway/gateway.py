@@ -34,7 +34,7 @@ class CameraConfig:
     username: Optional[str] = None
     password: Optional[str] = None
     modality: str = "rgb"  # rgb, thermal, rgb_t
-    fps_target: int = 30
+    fps_target: int = 8
     enabled: bool = True
     detection_enabled: bool = True
     mjpeg_url: Optional[str] = None
@@ -373,6 +373,14 @@ class VideoFileCameraAdapter(CameraAdapter):
             if not ret or frame is None:
                 self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 ret, frame = self.cap.read()
+                
+                # Fallback: if setting frame to 0 didn't work (common OpenCV issue with some codecs), try reopening the file
+                if not ret or frame is None:
+                    self.cap.release()
+                    self.cap = cv2.VideoCapture(self.config.rtsp_url)
+                    if self.cap.isOpened():
+                        ret, frame = self.cap.read()
+                        
                 if not ret or frame is None:
                     return None, None
             
@@ -433,11 +441,23 @@ class CameraManager:
         self.camera_configs[config.id] = config
         
         # Create appropriate adapter based on modality and URL
-        if config.modality == "thermal":
+        is_video = False
+        if config.rtsp_url and (config.modality == "video" or os.path.isfile(config.rtsp_url) or str(config.rtsp_url).lower().endswith(('.mp4', '.avi', '.mkv', '.mov'))):
+            is_video = True
+            
+        if is_video and config.modality == "thermal":
+            import subprocess
+            logger.info(f"Bypassing pipeline: Launching standalone thermal detector for {config.rtsp_url}")
+            script_path = os.path.join(os.path.dirname(__file__), "..", "thermal_detector.py")
+            model_path = os.path.join(os.path.dirname(__file__), "..", "models", "yolov8s_thermal.onnx")
+            subprocess.Popen([sys.executable, script_path, "--video", str(config.rtsp_url), "--model", model_path, "--camera_id", str(config.id)])
+            # Use a dummy adapter so the gateway doesn't crash but we skip standard processing
             adapter = ThermalCameraAdapter(config)
-        elif config.modality == "video":
+        elif is_video:
             adapter = VideoFileCameraAdapter(config)
-        elif config.rtsp_url.startswith('http'):
+        elif config.modality == "thermal":
+            adapter = ThermalCameraAdapter(config)
+        elif config.rtsp_url and config.rtsp_url.startswith('http'):
             adapter = MJPEGCameraAdapter(config)
         else:
             adapter = RTSPCameraAdapter(config)
@@ -490,10 +510,17 @@ class CameraManager:
             await self.disconnect_camera(camera_id)
     
     def _serialize_frame(self, frame: np.ndarray, metadata: FrameMetadata) -> bytes:
-        """Serialize frame for Redis."""
+        """Serialize frame for Redis (resized to max 640px wide to reduce payload)."""
         try:
+            # Downscale to max 640 wide — AI resizes to 640x640 anyway
+            h, w = frame.shape[:2]
+            if w > 640:
+                scale = 640 / w
+                frame = cv2.resize(frame, (640, int(h * scale)),
+                                   interpolation=cv2.INTER_LINEAR)
+
             # Encode frame as JPEG
-            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
             frame_bytes = buffer.tobytes()
             
             # Encode as base64
@@ -529,10 +556,18 @@ class CameraManager:
             try:
                 # Check if camera is connected
                 if not adapter.is_connected():
-                    logger.warning(f"Camera {camera_id} disconnected, attempting reconnect")
+                    # Only log warning every 5 attempts to reduce noise
+                    attempt = getattr(adapter, '_conn_attempts', 0) + 1
+                    adapter._conn_attempts = attempt
+                    
+                    if attempt % 5 == 1:
+                        logger.warning(f"Camera {camera_id} disconnected, attempting reconnect (Attempt {attempt})")
+                    
                     if not await adapter.connect():
                         await asyncio.sleep(5.0)
                         continue
+                    else:
+                        adapter._conn_attempts = 0 # Reset on success
                 
                 # Get frame
                 frame, metadata = await adapter.get_frame()
@@ -547,10 +582,15 @@ class CameraManager:
                 self.stats['frames_per_camera'][camera_id] += 1
                 self.stats['last_frame_time'][camera_id] = datetime.now()
                 
-                # Serialize and publish frame
+                # Serialize and push frame for AI inference
                 frame_data = self._serialize_frame(frame, metadata)
                 if frame_data:
-                    self.redis_client.rpush('frame_queue', frame_data)
+                    # Push then trim: keep only the 2 most-recent frames in the queue
+                    # This prevents stale-frame accumulation which causes bounding-box lag
+                    pipe = self.redis_client.pipeline()
+                    pipe.rpush('frame_queue', frame_data)
+                    pipe.ltrim('frame_queue', -2, -1)
+                    pipe.execute()
                 
                 # Rate limiting based on target FPS
                 frame_time = 1.0 / config.fps_target
@@ -656,13 +696,42 @@ class CameraGateway:
         self.onvif_discovery = ONVIFDiscovery()
         self.running = False
     
+    async def _listen_for_updates(self):
+        """Listen for camera configuration updates from Redis."""
+        pubsub = self.camera_manager.redis_client.pubsub()
+        pubsub.subscribe('camera_updates')
+        
+        logger.info("Listening for camera updates on Redis...")
+        
+        while self.running:
+            try:
+                message = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                if message:
+                    data = json.loads(message['data'])
+                    action = data.get('action')
+                    camera_id = data.get('camera_id')
+                    
+                    if action == 'delete' and camera_id:
+                        logger.info(f"Dynamic removal request for camera {camera_id}")
+                        self.camera_manager.remove_camera(camera_id)
+                
+                await asyncio.sleep(0.1)
+            except Exception as e:
+                logger.error(f"Error in camera updates listener: {e}")
+                await asyncio.sleep(1.0)
+
     async def start(self):
         """Start the camera gateway service."""
         self.running = True
         logger.info("Camera gateway service started")
         
         # Start camera capture
-        await self.camera_manager.start_capture()
+        capture_task = asyncio.create_task(self.camera_manager.start_capture())
+        
+        # Start listener for dynamic updates
+        listener_task = asyncio.create_task(self._listen_for_updates())
+        
+        await asyncio.gather(capture_task, listener_task)
     
     def stop(self):
         """Stop the camera gateway service."""
@@ -682,7 +751,11 @@ if __name__ == "__main__":
     from sqlalchemy.orm import sessionmaker
     import uuid
     import sys
-    sys.path.append(os.path.join(os.path.dirname(__file__), "..", "backend-api"))
+    
+    # Ensure the root directory is in the Python path
+    ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    if ROOT_DIR not in sys.path:
+        sys.path.insert(0, ROOT_DIR)
 
     # Setup database connection
     DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/surveillance")

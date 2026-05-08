@@ -35,6 +35,7 @@ const VideoPlayer = ({ camera, showAI = true, className = "" }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [videoRect, setVideoRect] = useState({ top: 0, left: 0, width: '100%', height: '100%' });
   const [lastAlertTime, setLastAlertTime] = useState(0);
+  const [syncFrame, setSyncFrame] = useState(null);   // base64 annotated frame from AI
   const wsRef = useRef(null);
   const reconnectRef = useRef(null);
   const mountedRef = useRef(true);
@@ -114,6 +115,9 @@ const VideoPlayer = ({ camera, showAI = true, className = "" }) => {
           if (msg.type === 'detection' && msg.camera_id === cameraId) {
             console.debug(`[LiveFeed] Detections received for ${cameraId}:`, msg.detections?.length);
             setDetections(msg.detections ?? []);
+          } else if (msg.type === 'surveillance_frames' && msg.camera_id === cameraId) {
+            // Annotated frame from AI engine — display directly (no lag)
+            if (msg.image_data) setSyncFrame(msg.image_data);
           } else if (msg.event_type && msg.camera_id === cameraId) {
             console.warn(`[LiveFeed] ALERT DETECTED for ${cameraId}:`, msg.event_type);
             setActiveAlert({
@@ -211,7 +215,16 @@ const VideoPlayer = ({ camera, showAI = true, className = "" }) => {
       {/* ── Video Stream ─────────────────────────────────────────── */}
       {isOnline ? (
         <>
-          {isMjpeg ? (
+          {/* Priority: AI-annotated frame (no lag) → MJPEG → video file */}
+          {syncFrame ? (
+            <img
+              ref={mediaRef}
+              src={`data:image/jpeg;base64,${syncFrame}`}
+              alt={`Annotated ${cameraName}`}
+              className="w-full h-full object-contain"
+              onLoad={() => { setIsLoading(false); updateVideoRect(); }}
+            />
+          ) : isMjpeg ? (
             imgError ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-900 gap-4">
                 <WifiOff className="w-12 h-12 text-red-500/50" />
@@ -247,7 +260,7 @@ const VideoPlayer = ({ camera, showAI = true, className = "" }) => {
             <video
               ref={mediaRef}
               src={resolvedStreamUrl}
-              autoPlay muted playsInline
+              autoPlay muted playsInline loop
               className="w-full h-full object-contain"
               onPlaying={() => {
                 setIsLoading(false);
@@ -263,12 +276,15 @@ const VideoPlayer = ({ camera, showAI = true, className = "" }) => {
           )}
 
           {/* ── Zones Overlay (Persistent) ───────────────────────── */}
-          <div className="absolute pointer-events-none z-10" style={videoRect}>
-            <ZoneOverlay zones={zones} />
-          </div>
+          {!syncFrame && (
+            <div className="absolute pointer-events-none z-10" style={videoRect}>
+              <ZoneOverlay zones={zones} />
+            </div>
+          )}
 
           {/* ── BBox + MOT Tracking Layer ────────────────────────── */}
-          {showAI && (
+          {/* When syncFrame active, boxes are already baked into the annotated image by AI */}
+          {showAI && !syncFrame && (
             <div className="absolute pointer-events-none z-20" style={videoRect}>
               <BBoxOverlay detections={detections} zones={zones} showTrajectory={false} showVelocity={false} />
             </div>

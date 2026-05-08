@@ -33,35 +33,56 @@ api.interceptors.request.use(
   }
 );
 
+// Throttle: show network-error toast at most once per 15 s
+let _lastNetworkToast = 0;
+const _showNetworkToast = () => {
+  const now = Date.now();
+  if (now - _lastNetworkToast > 15000) {
+    _lastNetworkToast = now;
+    toast.error('Network error. Please check your connection.', { id: 'network-error' });
+  }
+};
+
 // Response interceptor
 api.interceptors.response.use(
   (response) => {
     return response.data;
   },
   (error) => {
-    // Handle common errors
+    // Silent URLs: background polling – never show toast
+    const silentPatterns = [
+      '/analytics/summary',
+      '/cameras/discover',
+      '/camera-groups',
+      '/events',
+      '/cameras',
+      '/zones',
+    ];
+    const url = error.config?.url || '';
+    const method = error.config?.method?.toLowerCase() || 'get';
+    const isSilent = method === 'get' && silentPatterns.some((p) => url.includes(p));
+
+    if (isSilent) {
+      return Promise.reject(error);
+    }
+
     if (error.response) {
       const status = error.response.status;
       const message = error.response.data?.detail || error.response.data?.message || 'An error occurred';
-      
+
       switch (status) {
         case 401:
-          // Unauthorized - clear auth and redirect to login
           localStorage.removeItem('auth-storage');
           window.location.href = '/login';
           toast.error('Session expired. Please login again.');
           break;
-        
         case 403:
           toast.error('You do not have permission to perform this action.');
           break;
-        
         case 404:
-          toast.error('Resource not found.');
+          // Silently ignore 404 for background requests
           break;
-        
         case 422:
-          // Validation error - show specific field errors
           if (error.response.data?.detail && Array.isArray(error.response.data.detail)) {
             error.response.data.detail.forEach((err) => {
               toast.error(`${err.loc?.join('.')} ${err.msg}`);
@@ -70,22 +91,19 @@ api.interceptors.response.use(
             toast.error(message);
           }
           break;
-        
         case 500:
-          toast.error('Server error. Please try again later.');
+          // Silently ignore 500 for background polling
           break;
-        
         default:
           toast.error(message);
       }
     } else if (error.request) {
-      // Network error
-      toast.error('Network error. Please check your connection.');
+      // Network error – throttled
+      _showNetworkToast();
     } else {
-      // Other error
       toast.error('An unexpected error occurred.');
     }
-    
+
     return Promise.reject(error);
   }
 );

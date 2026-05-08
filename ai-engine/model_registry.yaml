@@ -299,9 +299,9 @@ models:
       max_detections: 1000
 
   thermal_yolov8n:
-    name: "YOLOv8 Nano (Thermal)"
+    name: "YOLOv8 Small (Thermal)"
     modality: "thermal"
-    model_path: "../models/thermal_yolov8n.onnx"  # To be trained
+    model_path: "../models/yolov8s_thermal.onnx"
     input_size: [640, 640]
     classes:
       - person
@@ -315,7 +315,7 @@ models:
       pad: true
       convert_grayscale_to_rgb: true  # Stack single channel to 3 channels
     postprocessing:
-      confidence_threshold: 0.7
+      confidence_threshold: 0.25
       nms_threshold: 0.45
       max_detections: 500
 

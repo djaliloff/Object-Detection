@@ -45,11 +45,11 @@ function formatEventType(type) {
   return (EVENT_META[type] || EVENT_META.default).label;
 }
 
-const AlertCard = ({ alert, onAck }) => {
+const AlertCard = ({ alert, onAccept, onReject, onDelete }) => {
   const [expanded, setExpanded] = useState(false);
   const meta = EVENT_META[alert.event_type] || EVENT_META.default;
   const Icon = meta.icon;
-  const snapshotUrl = alert.snapshot ? `${API_BASE}${alert.snapshot}` : null;
+  const snapshotUrl = alert.snapshot ? (alert.snapshot.startsWith('http') ? alert.snapshot : `${API_BASE}${alert.snapshot}`) : null;
 
   return (
     <div
@@ -89,15 +89,13 @@ const AlertCard = ({ alert, onAck }) => {
           </p>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
-          {!alert.acknowledged && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onAck(alert.id); }}
-              className="p-1 rounded hover:bg-white/10 transition-colors"
-              title="Marquer comme lu"
-            >
-              <CheckCheck className="w-3 h-3 text-gray-400 hover:text-green-400" />
-            </button>
-          )}
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete(alert.id); }}
+            className="p-1 rounded hover:bg-white/10 transition-colors"
+            title="Supprimer l'alerte"
+          >
+            <Trash2 className="w-3 h-3 text-gray-500 hover:text-red-400" />
+          </button>
           <ChevronDown
             className={`w-3 h-3 text-gray-500 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
           />
@@ -163,17 +161,36 @@ const AlertCard = ({ alert, onAck }) => {
           </div>
 
           {!alert.acknowledged && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onAck(alert.id); }}
-              className="w-full py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all"
-              style={{
-                background: `${meta.color}22`,
-                border: `1px solid ${meta.color}44`,
-                color: meta.color,
-              }}
-            >
-              Acquitter l'alerte
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={(e) => { e.stopPropagation(); onAccept(alert.id); }}
+                className="flex-1 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex justify-center items-center gap-1 hover:bg-green-500/20"
+                style={{
+                  background: `rgba(34,197,94,0.1)`,
+                  border: `1px solid rgba(34,197,94,0.3)`,
+                  color: '#22c55e',
+                }}
+              >
+                <CheckCheck className="w-3 h-3" /> Accepter
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); onReject(alert.id); }}
+                className="flex-1 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex justify-center items-center gap-1 hover:bg-red-500/20"
+                style={{
+                  background: `rgba(239,68,68,0.1)`,
+                  border: `1px solid rgba(239,68,68,0.3)`,
+                  color: '#ef4444',
+                }}
+              >
+                <X className="w-3 h-3" /> Refuser
+              </button>
+            </div>
+          )}
+          
+          {alert.acknowledged && alert.resolution && (
+            <div className={`text-center py-1.5 rounded border text-[9px] font-black uppercase tracking-widest ${alert.resolution === 'accepted' ? 'text-green-500 bg-green-500/10 border-green-500/20' : 'text-red-500 bg-red-500/10 border-red-500/20'}`}>
+               Alerte {alert.resolution === 'accepted' ? 'Acceptée' : 'Refusée'}
+            </div>
           )}
         </div>
       )}
@@ -183,7 +200,7 @@ const AlertCard = ({ alert, onAck }) => {
 
 const AlertPanel = () => {
   const [open, setOpen] = useState(false);
-  const { alerts, acknowledgeAlert, clearAll } = useAlertStore();
+  const { alerts, acceptAlert, rejectAlert, deleteAlert, clearAll } = useAlertStore();
   const panelRef = useRef(null);
 
   const unread = alerts.filter((a) => !a.acknowledged).length;
@@ -293,7 +310,9 @@ const AlertPanel = () => {
                 <AlertCard
                   key={alert.id}
                   alert={alert}
-                  onAck={acknowledgeAlert}
+                  onAccept={acceptAlert}
+                  onReject={rejectAlert}
+                  onDelete={deleteAlert}
                 />
               ))
             )}

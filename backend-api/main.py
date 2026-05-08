@@ -168,7 +168,8 @@ api_v1_router = APIRouter()
 # Health check endpoint
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": datetime.utcnow()}
+    from datetime import UTC
+    return {"status": "healthy", "timestamp": datetime.now(UTC)}
 
 # Authentication endpoints
 @api_v1_router.post("/auth/login", response_model=Token)
@@ -295,7 +296,7 @@ async def update_camera(
 @api_v1_router.delete("/cameras/{camera_id}")
 async def delete_camera(
     camera_id: str,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_operator_or_admin),
     db: Session = Depends(get_db)
 ):
     camera = db.query(Camera).filter(Camera.id == camera_id).first()
@@ -305,6 +306,13 @@ async def delete_camera(
     db.delete(camera)
     db.commit()
     
+    # Notify other services via Redis
+    if redis_client:
+        redis_client.publish('camera_updates', json.dumps({
+            'action': 'delete',
+            'camera_id': camera_id
+        }))
+    
     logger.info(f"Camera {camera.name} deleted by {current_user.username}")
     return {"message": "Camera deleted successfully"}
 
@@ -312,7 +320,7 @@ async def delete_camera(
 @api_v1_router.post("/cameras/bulk-delete")
 async def bulk_delete_cameras(
     camera_ids: List[str],
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_operator_or_admin),
     db: Session = Depends(get_db)
 ):
     count = db.query(Camera).filter(Camera.id.in_(camera_ids)).delete(synchronize_session=False)
@@ -555,11 +563,14 @@ async def process_redis_messages():
                         data = json.loads(message["data"])
                         
                         # Broadcast to appropriate clients
-                        if channel in ["surveillance_events", "surveillance_frames", "camera_status"]:
+                        if channel in ["surveillance_events", "camera_status"]:
                             await manager.broadcast(data, data.get("camera_id"))
                         elif channel == "surveillance_detections":
                             if 'type' not in data:
                                 data['type'] = 'detection'
+                            await manager.broadcast(data, data.get("camera_id"))
+                        elif channel == "surveillance_frames":
+                            data['type'] = 'surveillance_frames'
                             await manager.broadcast(data, data.get("camera_id"))
                     except Exception as json_err:
                         logger.error(f"Error decoding Redis data: {json_err}")

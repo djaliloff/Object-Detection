@@ -20,6 +20,7 @@ const Surveillance = () => {
     queryKey: ['cameras'],
     queryFn: camerasAPI.getCameras,
     refetchInterval: 30000,
+    retry: false,
   });
 
   const handleCameraSelect = (camera) => {

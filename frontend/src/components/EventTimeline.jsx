@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   AlertTriangle, 
   Shield, 
@@ -11,6 +11,8 @@ import {
 } from 'lucide-react';
 
 const EventTimeline = ({ events = [], onEventClick }) => {
+  const [expandedEventId, setExpandedEventId] = useState(null);
+
   const getEventIcon = (eventType) => {
     switch (eventType) {
       case 'intrusion': return <Shield className="w-4 h-4" />;
@@ -56,7 +58,11 @@ const EventTimeline = ({ events = [], onEventClick }) => {
               </div>
 
               <div 
-                onClick={() => onEventClick && onEventClick(event)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExpandedEventId(prev => prev === event.id ? null : event.id);
+                  if (onEventClick) onEventClick(event);
+                }}
                 className={`flex-1 p-6 bg-gradient-to-br rounded-[24px] border cursor-pointer transition-all hover:translate-x-1 ${
                   event.status === 'new' 
                     ? 'from-red-900/40 to-red-600/10 border-red-500/80 shadow-[0_0_15px_rgba(239,68,68,0.3)]' 
@@ -99,12 +105,15 @@ const EventTimeline = ({ events = [], onEventClick }) => {
                 </div>
 
                 {/* ── Event Capture Thumbnail ── */}
-                <div className="w-full bg-black/40 rounded-xl overflow-hidden border border-white/5 relative h-32 flex items-center justify-center">
-                   {event.snapshot_refs && (event.snapshot_refs.default || typeof event.snapshot_refs === 'string') ? (
+                <div className={`w-full bg-black/40 rounded-xl overflow-hidden border border-white/5 relative flex items-center justify-center transition-all duration-300 ${expandedEventId === event.id ? 'h-auto max-h-[80vh] min-h-[300px]' : 'h-32'}`}>
+                   {event.snapshot_refs && (event.snapshot_refs.frame || event.snapshot_refs.default || typeof event.snapshot_refs === 'string') ? (
                      <img 
-                       src={event.snapshot_refs.default || event.snapshot_refs} 
+                       src={(event.snapshot_refs.frame || event.snapshot_refs.default || event.snapshot_refs).startsWith('http') ? 
+                         (event.snapshot_refs.frame || event.snapshot_refs.default || event.snapshot_refs) : 
+                         `${window.location.protocol}//${window.location.hostname}:8000${event.snapshot_refs.frame || event.snapshot_refs.default || event.snapshot_refs}`
+                       } 
                        alt="Event Capture" 
-                       className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" 
+                       className={`w-full transition-opacity ${expandedEventId === event.id ? 'h-auto object-contain opacity-100 max-h-[80vh]' : 'h-full object-cover opacity-80 group-hover:opacity-100'}`} 
                      />
                    ) : (
                      <div className="text-center flex flex-col items-center">
@@ -112,8 +121,24 @@ const EventTimeline = ({ events = [], onEventClick }) => {
                        <span className="text-[9px] font-black uppercase tracking-widest text-neutral-600">No Capture Available</span>
                      </div>
                    )}
-                   <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" />
+                   <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent pointer-events-none" />
                 </div>
+
+                {/* ── Expanded Extra Details ── */}
+                {expandedEventId === event.id && event.event_data && (
+                  <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                    {Object.entries(event.event_data).map(([key, value]) => {
+                      // Skip complex objects or already displayed fields
+                      if (typeof value === 'object' || key === 'object_class' || key === 'confidence') return null;
+                      return (
+                        <div key={key} className="bg-black/20 rounded-xl p-3 border border-white/5">
+                          <p className="text-[8px] font-black text-neutral-500 uppercase tracking-widest mb-1">{key.replace(/_/g, ' ')}</p>
+                          <p className="text-[11px] font-bold text-white uppercase">{String(value)}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           ))}

@@ -6,10 +6,11 @@ import CameraCard from './CameraCard.jsx';
  * MultiCameraGrid.jsx — Dynamic surveillance matrix
  * Supports 1x1, 2x2, 3x3, 4x4 layouts with fluid animations
  */
-const MultiCameraGrid = ({ cameras = [], onCameraSelect, onMaximize, onOpenZoneManager, selectedCameraId, gridLayout: externalGridLayout }) => {
+const MultiCameraGrid = ({ cameras = [], onCameraSelect, onOpenZoneManager, selectedCameraId, gridLayout: externalGridLayout }) => {
   const [internalGridLayout, setInternalGridLayout] = useState('2x2');
+  const [maximizedCameraId, setMaximizedCameraId] = useState(null);
   
-  const gridLayout = externalGridLayout || internalGridLayout;
+  const gridLayout = maximizedCameraId ? '1x1' : (externalGridLayout || internalGridLayout);
 
   const getGridDimensions = () => {
     const [rows, cols] = gridLayout.split('x').map(Number);
@@ -23,6 +24,14 @@ const MultiCameraGrid = ({ cameras = [], onCameraSelect, onMaximize, onOpenZoneM
     return { row, col };
   };
 
+  const handleToggleMaximize = (camera) => {
+    if (maximizedCameraId === camera.id) {
+      setMaximizedCameraId(null);
+    } else {
+      setMaximizedCameraId(camera.id);
+    }
+  };
+
   const renderCamera = (camera, index) => {
     const { row, col } = getCameraPosition(index);
     const { rows, cols } = getGridDimensions();
@@ -31,6 +40,7 @@ const MultiCameraGrid = ({ cameras = [], onCameraSelect, onMaximize, onOpenZoneM
     const cellHeight = 100 / rows;
     
     const isSelected = selectedCameraId === camera.id;
+    const isMaximized = maximizedCameraId === camera.id;
 
     return (
       <div
@@ -50,12 +60,13 @@ const MultiCameraGrid = ({ cameras = [], onCameraSelect, onMaximize, onOpenZoneM
       >
         <CameraCard 
           camera={camera} 
-          onMaximize={(cam) => onMaximize?.(cam)}
+          isMaximized={isMaximized}
+          onToggleMaximize={handleToggleMaximize}
           onOpenZoneManager={(cam) => onOpenZoneManager?.(cam)}
         />
         
         {/* Selection Glow */}
-        {isSelected && (
+        {isSelected && !isMaximized && (
           <div className="absolute inset-0 border-2 border-blue-500 rounded-[32px] pointer-events-none shadow-[0_0_30px_rgba(59,130,246,0.4)] z-20 animate-in fade-in zoom-in duration-300 ring-4 ring-blue-500/10" />
         )}
       </div>
@@ -67,7 +78,14 @@ const MultiCameraGrid = ({ cameras = [], onCameraSelect, onMaximize, onOpenZoneM
   
   let visibleCameras = [];
   if (Array.isArray(cameras)) {
-    if (selectedCameraId) {
+    if (maximizedCameraId) {
+       const cam = cameras.find(c => c.id === maximizedCameraId);
+       if (cam) {
+         visibleCameras = [cam];
+       } else {
+         setMaximizedCameraId(null);
+       }
+    } else if (selectedCameraId) {
        const selectedIndex = cameras.findIndex(c => c.id === selectedCameraId);
        if (selectedIndex !== -1 && selectedIndex >= maxVisible) {
          // Selected camera exists but is outside current view; move it to position 0

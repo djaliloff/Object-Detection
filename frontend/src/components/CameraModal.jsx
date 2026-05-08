@@ -115,7 +115,6 @@ const CameraModal = ({ isOpen, onClose, camera = null }) => {
         ...prev,
         rtsp_url: response.file_path,
         stream_url: response.web_url,
-        modality: 'video',
         ip: '0.0.0.0' // Placeholder for video files
       }));
       toast.success('Archive successfully staged', { id: loadingToast });
@@ -270,19 +269,30 @@ const CameraModal = ({ isOpen, onClose, camera = null }) => {
                 <div className="space-y-6">
                   <div className="group">
                     <label className="text-[10px] font-black uppercase tracking-widest text-neutral-600 block mb-2 group-focus-within:text-blue-500 transition-colors">Optic Class</label>
-                    <select
-                      name="modality"
-                      className="w-full bg-neutral-800/50 border border-white/5 rounded-2xl py-4 px-5 outline-none focus:ring-2 ring-blue-500/50 text-white font-bold transition-all appearance-none cursor-pointer"
-                      value={formData.modality}
-                      onChange={handleChange}
-                      disabled={sourceType === 'video'}
-                    >
-                      <option value="rgb">RGB (Standard Visual)</option>
-                      <option value="thermal">Thermal (Heat Signature)</option>
-                      <option value="fused">Fused (Multispectral)</option>
-                      <option value="mjpeg">MJPEG (Network Stream)</option>
-                      <option value="video">VIDEO (Archive Replay)</option>
-                    </select>
+                    <div className="flex bg-neutral-900 rounded-2xl p-1 border border-white/5">
+                      <button
+                        type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, modality: 'rgb' }))}
+                        className={`flex-1 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${
+                          formData.modality === 'rgb'
+                            ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' 
+                            : 'text-neutral-500 hover:text-white'
+                        }`}
+                      >
+                        RGB Standard
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, modality: 'thermal' }))}
+                        className={`flex-1 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${
+                          formData.modality === 'thermal'
+                            ? 'bg-orange-600 text-white shadow-lg shadow-orange-500/20' 
+                            : 'text-neutral-500 hover:text-white'
+                        }`}
+                      >
+                        Thermique
+                      </button>
+                    </div>
                   </div>
                   <div className="group">
                     <label className="text-[10px] font-black uppercase tracking-widest text-neutral-600 block mb-2 group-focus-within:text-blue-500 transition-colors">Strategic Zone</label>

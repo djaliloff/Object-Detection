@@ -11,6 +11,11 @@ echo.
 set ROOT_DIR=%~dp0
 cd /d %ROOT_DIR%
 
+:: Set PYTHONPATH to include the root directory
+set "PYTHONPATH=%ROOT_DIR%;%PYTHONPATH%"
+set "PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9\bin;%PATH%"
+set PYTHONUNBUFFERED=1
+
 :: Check for virtual environment
 if not exist "venv311\Scripts\python.exe" (
     echo [ERROR] Virtual environment 'venv311' not found!

@@ -10,7 +10,7 @@ const useAlertStore = create((set, get) => ({
       event_type: alertData.event_type,
       camera_id: alertData.camera_id,
       event_data: alertData.event_data || {},
-      snapshot: alertData.snapshot_refs?.frame || null,
+      snapshot: alertData.snapshot_refs ? (alertData.snapshot_refs.frame || alertData.snapshot_refs.default || (typeof alertData.snapshot_refs === 'string' ? alertData.snapshot_refs : null)) : null,
       severity: alertData.severity || 'medium',
       zone_id: alertData.zone_id,
       timestamp: alertData.start_time ? new Date(alertData.start_time).getTime() : Date.now(),
@@ -24,6 +24,24 @@ const useAlertStore = create((set, get) => ({
   acknowledgeAlert: (id) => {
     set((state) => ({
       alerts: state.alerts.map((a) => (a.id === id ? { ...a, acknowledged: true } : a)),
+    }));
+  },
+
+  acceptAlert: (id) => {
+    set((state) => ({
+      alerts: state.alerts.map((a) => (a.id === id ? { ...a, acknowledged: true, resolution: 'accepted' } : a)),
+    }));
+  },
+
+  rejectAlert: (id) => {
+    set((state) => ({
+      alerts: state.alerts.map((a) => (a.id === id ? { ...a, acknowledged: true, resolution: 'rejected' } : a)),
+    }));
+  },
+
+  deleteAlert: (id) => {
+    set((state) => ({
+      alerts: state.alerts.filter((a) => a.id !== id),
     }));
   },
 

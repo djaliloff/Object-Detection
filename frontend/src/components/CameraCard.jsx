@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { 
   MoreVertical, 
   Maximize2, 
+  Minimize2,
   Activity, 
   Shield, 
   Radio, 
@@ -18,7 +19,7 @@ import VideoPlayer from './VideoPlayer.jsx';
 import { camerasAPI } from '../utils/api';
 import toast from 'react-hot-toast';
 
-const CameraCard = ({ camera, onMaximize, onOpenZoneManager }) => {
+const CameraCard = ({ camera, onToggleMaximize, isMaximized, onOpenZoneManager }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [showAI, setShowAI] = useState(true);
   const menuRef = useRef(null);
@@ -77,10 +78,10 @@ const CameraCard = ({ camera, onMaximize, onOpenZoneManager }) => {
         
         <div className="flex space-x-2 pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity">
           <button 
-            onClick={() => onMaximize?.(camera)}
+            onClick={() => onToggleMaximize?.(camera)}
             className="p-2 bg-white/5 backdrop-blur-md rounded-xl border border-white/10 hover:bg-white/10 text-white transition-all transform hover:scale-110"
           >
-            <Maximize2 className="w-4 h-4" />
+            {isMaximized ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
           
           <div className="relative" ref={menuRef}>

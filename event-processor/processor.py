@@ -1,4 +1,11 @@
 import os
+import sys
+
+# Ensure the root directory is in the Python path so we can import backend_api
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+
 import json
 import time
 import math
@@ -15,13 +22,12 @@ from shapely.ops import nearest_points
 import uuid
 from dotenv import load_dotenv
 from notification_service import notification_service
-import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), "..", "backend-api"))
+
 from database import SessionLocal
 from models import Zone as DBZone, Camera as DBCamera, Event as DBEvent
 
 # Load environment variables from the root .env file
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+load_dotenv(os.path.join(ROOT_DIR, ".env"))
 
 logger = structlog.get_logger()
 
@@ -291,6 +297,7 @@ class IntrusionDetector:
         self.active_intrusions: Dict[str, Event] = {}
         self.last_ephemeral_alert: Dict[str, float] = {}
         self.history_alerted_tracks: set = set() # (camera_id, track_id, zone_id)
+        self.last_zone_alert: Dict[str, float] = {}
     
     def detect_intrusion(self, track: Track, zones: List[Zone], snapshot_path: str = None) -> List[Event]:
         events = []
@@ -318,15 +325,20 @@ class IntrusionDetector:
                 should_alert = False
                 
                 if is_ephemeral:
-                    # Throttle ephemeral alerts to 1 per second per zone
+                    # Throttle ephemeral alerts to 30 seconds per zone to avoid spam
                     ephemeral_key = f"{track.camera_id}_{zone.id}"
                     now = time.time()
-                    if now - self.last_ephemeral_alert.get(ephemeral_key, 0) > 1.0:
+                    if now - self.last_ephemeral_alert.get(ephemeral_key, 0) > 30.0:
                         self.last_ephemeral_alert[ephemeral_key] = now
                         should_alert = True
                 elif intrusion_key not in self.active_intrusions and (track.camera_id, track.id, zone.id) not in self.history_alerted_tracks:
-                    should_alert = True
-                    self.history_alerted_tracks.add((track.camera_id, track.id, zone.id))
+                    # Also throttle non-ephemeral by 5 seconds per zone to avoid track ID flickering
+                    zone_key = f"{track.camera_id}_{zone.id}"
+                    now = time.time()
+                    if now - self.last_zone_alert.get(zone_key, 0) > 5.0:
+                        self.last_zone_alert[zone_key] = now
+                        should_alert = True
+                        self.history_alerted_tracks.add((track.camera_id, track.id, zone.id))
 
                 if should_alert:
                     event = Event(
@@ -578,52 +590,17 @@ class AbandonedObjectDetector:
         
         return events
 
-class SpeedAnomalyDetector:
-    """Detects speed anomalies — tracks moving faster than threshold."""
-    
-    def __init__(self, max_speed: float = 0.5):
-        """
-        Args:
-            max_speed: Max speed in normalized coordinates per second.
-                      0.5 means crossing 50% of frame per second.
-        """
-        self.max_speed = max_speed
-        self.alerted_tracks: set = set()  # track_key -> already alerted
-    
-    def detect_speed_anomaly(self, track: Track, snapshot_path: str = None) -> List[Event]:
-        events = []
-        
-        if track.velocity is None:
-            return events
-        
-        speed = math.sqrt(track.velocity[0]**2 + track.velocity[1]**2)
-        track_key = f"{track.camera_id}_{track.id}"
-        
-        if speed > self.max_speed and track_key not in self.alerted_tracks:
-            event = Event(
-                id=str(uuid.uuid4()),
-                event_type="speed_anomaly",
-                camera_id=track.camera_id,
-                track_id=track.id,
-                start_time=track.last_seen,
-                end_time=track.last_seen,
-                severity="medium",
-                zone_id=None,
-                event_data={
-                    "object_class": track.object_class,
-                    "speed": round(speed, 4),
-                    "velocity_x": round(track.velocity[0], 4),
-                    "velocity_y": round(track.velocity[1], 4),
-                    "confidence": track.confidence_avg,
-                    "track_age": track.age,
-                }
-            )
-            self.alerted_tracks.add(track_key)
-            events.append(event)
-        
-        return events
-
 # ─── Main Event Processor ────────────────────────────────────────────────────
+
+class NpEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super(NpEncoder, self).default(obj)
 
 class EventProcessor:
     """Main event processor that coordinates all event detection using AI-engine MOT data."""
@@ -642,7 +619,6 @@ class EventProcessor:
         self.loitering_detector = LoiteringDetector()
         self.line_crossing_detector = LineCrossingDetector()
         self.abandoned_detector = AbandonedObjectDetector(min_duration_seconds=180.0)
-        self.speed_detector = SpeedAnomalyDetector(max_speed=0.5)
         
         self.running = False
         self.stats = {
@@ -727,7 +703,7 @@ class EventProcessor:
 
     def _serialize_event(self, event: Event) -> bytes:
         """Serialize event object to JSON bytes."""
-        return json.dumps(self._serialize_event_to_dict(event)).encode('utf-8')
+        return json.dumps(self._serialize_event_to_dict(event), cls=NpEncoder).encode('utf-8')
     
     def _load_zones_and_lines(self):
         """Load zones and lines from database."""
@@ -803,10 +779,6 @@ class EventProcessor:
             abandoned_events = self.abandoned_detector.detect_abandoned(track, snapshot_path=snapshot_path)
             events.extend(abandoned_events)
             
-            # Speed anomaly detection (new)
-            speed_events = self.speed_detector.detect_speed_anomaly(track, snapshot_path=snapshot_path)
-            events.extend(speed_events)
-        
         return events
     
     async def process_detection_queue(self):
@@ -840,7 +812,7 @@ class EventProcessor:
                     continue
                 
                 camera_id = detections[0].camera_id
-                events = self._process_detections(camera_id, detections)
+                events = self._process_detections(camera_id, detections, snapshot_path=snapshot_path)
                 
                     # Publish events
                 for event in events:
@@ -859,10 +831,10 @@ class EventProcessor:
                             severity=event.severity,
                             zone_id=uuid.UUID(event.zone_id) if event.zone_id and isinstance(event.zone_id, str) else event.zone_id,
                             event_data=event.event_data,
-                            status="new",
+                            status=event.status,
                             snapshot_refs=event.snapshot_refs
                         )
-                        db.add(db_event)
+                        db.merge(db_event)
                         db.commit()
                         db.close()
                         logger.debug(f"Event {event.id} persisted to database")
