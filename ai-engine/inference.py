@@ -4,10 +4,14 @@ import sys
 # Fix for ONNX Runtime CUDA DLL loading on Windows (MUST BE BEFORE IMPORTING ONNXRUNTIME)
 if sys.platform == 'win32':
     cuda_path = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9\bin"
-    if os.path.exists(cuda_path):
-        if hasattr(os, 'add_dll_directory'):
-            os.add_dll_directory(cuda_path)
-        os.environ['PATH'] = cuda_path + os.pathsep + os.environ['PATH']
+    # Also check for torch's bundled cuDNN
+    torch_lib = os.path.join(os.path.dirname(__file__), "..", "venv311", "Lib", "site-packages", "torch", "lib")
+    
+    for path in [torch_lib, cuda_path]:
+        if os.path.exists(path):
+            if hasattr(os, 'add_dll_directory'):
+                os.add_dll_directory(path)
+            os.environ['PATH'] = path + os.pathsep + os.environ['PATH']
 
 import base64
 import json

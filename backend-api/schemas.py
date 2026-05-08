@@ -72,7 +72,7 @@ class User(UserBase):
 class CameraBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     ip: str = Field(..., pattern=r'^(\d{1,3}\.){3}\d{1,3}$')
-    port: int = Field(default=554, ge=1, le=65535)
+    port: int = Field(default=554, ge=0, le=65535)
     rtsp_url: str = Field(..., min_length=1)
     hls_url: Optional[str] = None
     webrtc_url: Optional[str] = None
@@ -98,7 +98,7 @@ class CameraCreate(CameraBase):
 class CameraUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     ip: Optional[str] = Field(None, pattern=r'^(\d{1,3}\.){3}\d{1,3}$')
-    port: Optional[int] = Field(None, ge=1, le=65535)
+    port: Optional[int] = Field(None, ge=0, le=65535)
     rtsp_url: Optional[str] = Field(None, min_length=1)
     hls_url: Optional[str] = None
     webrtc_url: Optional[str] = None

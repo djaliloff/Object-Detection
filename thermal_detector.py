@@ -4,10 +4,14 @@ import sys
 # Fix for ONNX Runtime CUDA DLL loading on Windows (MUST BE BEFORE IMPORTING ONNXRUNTIME)
 if sys.platform == 'win32':
     cuda_path = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9\bin"
-    if os.path.exists(cuda_path):
-        if hasattr(os, 'add_dll_directory'):
-            os.add_dll_directory(cuda_path)
-        os.environ['PATH'] = cuda_path + os.pathsep + os.environ['PATH']
+    # Also check for torch's bundled cuDNN
+    torch_lib = os.path.join(os.path.dirname(__file__), "venv311", "Lib", "site-packages", "torch", "lib")
+    
+    for path in [torch_lib, cuda_path]:
+        if os.path.exists(path):
+            if hasattr(os, 'add_dll_directory'):
+                os.add_dll_directory(path)
+            os.environ['PATH'] = path + os.pathsep + os.environ['PATH']
 
 import base64
 import json
@@ -98,7 +102,10 @@ def detect_video(video_path, model_path, camera_id, conf_thres=0.5, iou_thres=0.
         if width > 0 and height > 0:
             cv2.resizeWindow("Thermal Detection", width, height)
 
+    # To calculate FPS and frame skipping
     prev_time = time.time()
+    frame_count = 0
+    skip_frames = 0 # Number of frames to skip to maintain real-time
 
     while True:
         ret, frame = cap.read()
@@ -106,6 +113,15 @@ def detect_video(video_path, model_path, camera_id, conf_thres=0.5, iou_thres=0.
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             ret, frame = cap.read()
             if not ret or frame is None: break
+        
+        frame_count += 1
+        start_proc_time = time.time()
+        
+        # --- OPTIMIZATION: Frame Skipping ---
+        # If we are lagging, skip some frames
+        if skip_frames > 0:
+            skip_frames -= 1
+            continue
         
         # --- OPTIMIZATION: Initial Resize ---
         # If frame is too large, downscale it immediately to improve processing speed
@@ -149,10 +165,17 @@ def detect_video(video_path, model_path, camera_id, conf_thres=0.5, iou_thres=0.
                 cv2.putText(frame, f"Person: {scores[i]:.2f}", (x1, y1 - 10), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
                 
-        # Calculate FPS
+        # Calculate FPS and skip_frames
         curr_time = time.time()
+        process_time = curr_time - start_proc_time
         fps = 1 / (curr_time - prev_time)
         prev_time = curr_time
+        
+        # If processing takes more than 1/20th of a second, skip frames
+        # target_fps = 20
+        if process_time > 0.05:
+            skip_frames = int(process_time / 0.05)
+            
         cv2.putText(frame, f"FPS: {fps:.1f}", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
         if show:
