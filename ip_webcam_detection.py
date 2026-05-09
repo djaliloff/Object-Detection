@@ -197,8 +197,8 @@ class UltraLowLatencyDetector:
 class IPCameraCapture:
     """Optimized IP camera capture for phone streaming."""
     
-    def __init__(self, ip_address: str, port: int = 8080, username: str = None, 
-                 password: str = None, buffer_size: int = 1):
+    def __init__(self, ip_address: str, port: int = 8080, username: Optional[str] = None, 
+                 password: Optional[str] = None, buffer_size: int = 1):
         """
         Initialize IP camera capture.
         
@@ -361,7 +361,7 @@ class IPCameraStreamingApp:
     def __init__(self, model_path: str, ip_address: str, port: int = 8080, 
                  conf_threshold: float = 0.25, iou_threshold: float = 0.45, 
                  use_gpu: bool = True, target_fps: int = 30, frame_skip: int = 1,
-                 username: str = None, password: str = None):
+                 username: Optional[str] = None, password: Optional[str] = None):
         """
         Initialize IP camera streaming app.
         

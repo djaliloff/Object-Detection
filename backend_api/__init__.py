@@ -1,1 +1,1 @@
-# This file makes backend-api a Python package
+# This file makes backend_api a Python package

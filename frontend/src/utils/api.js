@@ -72,9 +72,12 @@ api.interceptors.response.use(
 
       switch (status) {
         case 401:
-          localStorage.removeItem('auth-storage');
-          window.location.href = '/login';
-          toast.error('Session expired. Please login again.');
+          // Only redirect to login for non-silent requests (explicit user actions)
+          if (!isSilent) {
+            localStorage.removeItem('auth-storage');
+            window.location.href = '/login';
+            toast.error('Session expired. Please login again.');
+          }
           break;
         case 403:
           toast.error('You do not have permission to perform this action.');
@@ -121,10 +124,10 @@ export const camerasAPI = {
   deleteCamera: (id) => api.delete(`/cameras/${id}`),
   getCameraHealth: (id) => api.get(`/cameras/${id}/health`),
   discoverCameras: () => api.post('/cameras/discover'),
-  uploadVideo: (file) => {
+  uploadVideo: (file, modality = 'rgb') => {
     const formData = new FormData();
     formData.append('file', file);
-    return api.post('/cameras/upload-video', formData, {
+    return api.post(`/cameras/upload-video?modality=${modality}`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },

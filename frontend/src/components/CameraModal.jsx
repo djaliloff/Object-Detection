@@ -110,14 +110,18 @@ const CameraModal = ({ isOpen, onClose, camera = null }) => {
     setIsUploading(true);
     const loadingToast = toast.loading('Uploading tactical archive...');
     try {
-      const response = await camerasAPI.uploadVideo(file);
+      // Pass the current modality so the backend routes to RGB/ or Thermal/
+      const response = await camerasAPI.uploadVideo(file, formData.modality);
       setFormData(prev => ({
         ...prev,
         rtsp_url: response.file_path,
         stream_url: response.web_url,
         ip: '0.0.0.0' // Placeholder for video files
       }));
-      toast.success('Archive successfully staged', { id: loadingToast });
+      toast.success(
+        `Archive staged in ${response.subfolder} folder`,
+        { id: loadingToast }
+      );
     } catch (err) {
       toast.error('Upload sequence failed', { id: loadingToast });
     } finally {

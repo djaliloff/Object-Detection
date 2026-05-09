@@ -11,9 +11,8 @@ echo.
 set ROOT_DIR=%~dp0
 cd /d %ROOT_DIR%
 
-:: Set PYTHONPATH to include the root directory
-set "PYTHONPATH=%ROOT_DIR%;%PYTHONPATH%"
-set "PATH=%ROOT_DIR%venv311\Lib\site-packages\torch\lib;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9\bin;%PATH%"
+:: Set PYTHONPATH to include root AND backend_api so all services can import shared modules
+set PYTHONPATH=%ROOT_DIR%;%ROOT_DIR%backend_api;%PYTHONPATH%
 set PYTHONUNBUFFERED=1
 
 :: Check for virtual environment
@@ -35,22 +34,22 @@ timeout /t 2 /nobreak > nul
 
 :: 2. Start Backend API
 echo [2/6] Starting Backend API...
-start "Backend API" /d "%ROOT_DIR%backend-api" cmd /k "..\venv311\Scripts\python.exe main.py"
+start "Backend API" /d "%ROOT_DIR%backend_api" cmd /k "..\venv311\Scripts\python.exe main.py"
 timeout /t 3 /nobreak > nul
 
 :: 3. Start Camera Gateway
 echo [3/6] Starting Camera Gateway...
-start "Camera Gateway" /d "%ROOT_DIR%camera-gateway" cmd /k "..\venv311\Scripts\python.exe gateway.py"
+start "Camera Gateway" /d "%ROOT_DIR%camera_gateway" cmd /k "..\venv311\Scripts\python.exe gateway.py"
 timeout /t 2 /nobreak > nul
 
 :: 4. Start AI Inference Engine
 echo [4/6] Starting AI Inference Engine...
-start "AI Engine" /d "%ROOT_DIR%ai-engine" cmd /k "..\venv311\Scripts\python.exe inference.py"
+start "AI Engine" /d "%ROOT_DIR%ai_engine" cmd /k "..\venv311\Scripts\python.exe inference.py"
 timeout /t 5 /nobreak > nul
 
 :: 5. Start Event Processor
 echo [5/6] Starting Event Processor...
-start "Event Processor" /d "%ROOT_DIR%event-processor" cmd /k "..\venv311\Scripts\python.exe processor.py"
+start "Event Processor" /d "%ROOT_DIR%event_processor" cmd /k "..\venv311\Scripts\python.exe processor.py"
 timeout /t 2 /nobreak > nul
 
 :: 6. Start Frontend

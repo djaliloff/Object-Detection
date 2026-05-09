@@ -8,15 +8,13 @@ import os
 from datetime import datetime, timedelta
 import uuid
 
-# Ensure the root directory is in the Python path
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
+# Add parent directory to path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from backend_api.database import get_db, engine, Base
-from backend_api.models import User, Camera, CameraGroup, Event, Zone, Detection, Frame
+from database import get_db, engine, Base
+from models import User, Camera, CameraGroup, Event, Zone, Detection, Frame
 from sqlalchemy.orm import Session
-from backend_api.auth import get_password_hash
+from auth import get_password_hash
 
 def create_sample_data(db: Session):
     """Create sample data for demonstration."""

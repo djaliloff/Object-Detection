@@ -1,8 +1,8 @@
 import sys
 import os
 
-# Add backend-api to sys.path
-sys.path.insert(0, os.path.abspath("backend-api"))
+# Add backend_api to sys.path
+sys.path.insert(0, os.path.abspath("backend_api"))
 
 from database import SessionLocal
 from models import Event
