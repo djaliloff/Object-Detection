@@ -1,0 +1,11 @@
+numpy>=1.26.0
+redis==5.0.1
+structlog==23.2.0
+prometheus-client==0.19.0
+pydantic>=2.10.0
+shapely==2.0.6
+scikit-learn>=1.5.0
+filterpy==1.4.5
+pillow>=11.0.0
+opencv-python==4.9.0.80
+python-dotenv==1.0.0

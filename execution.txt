@@ -1,0 +1,17 @@
+root
+ .\redis\redis-server.exe
+
+camera-gateway
+ ..\venv311\Scripts\python.exe gateway.py
+
+ai-engine
+ ..\venv311\Scripts\python.exe inference.py
+
+backend-api
+ ..\venv311\Scripts\python.exe main.py
+
+frontend
+ npm start 
+
+ .\venv311\Scripts\python.exe .\ip_webcam_detection.py --ip 10.123.122.34 --port
+ 8080 --frame-skip 2
