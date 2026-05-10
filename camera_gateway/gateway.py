@@ -25,7 +25,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 # --- Performance Tunables (via .env) ---
 DISPLAY_MAX_W = int(os.getenv("DISPLAY_MAX_W", "800"))
 DISPLAY_JPEG_Q = int(os.getenv("DISPLAY_JPEG_Q", "65"))
-RTSP_QUEUE_SIZE = int(os.getenv("RTSP_QUEUE_SIZE", "20"))
+RTSP_QUEUE_SIZE = int(os.getenv("RTSP_QUEUE_SIZE", "3"))
 AI_MAX_W      = int(os.getenv("AI_MAX_W", "640"))
 AI_JPEG_Q     = int(os.getenv("AI_JPEG_Q", "65"))
 AI_FRAME_SKIP = int(os.getenv("AI_FRAME_SKIP", "3"))
@@ -127,7 +127,7 @@ class CameraConfig:
     username: Optional[str] = None
     password: Optional[str] = None
     modality: str = "rgb"  # rgb, thermal, rgb_t
-    fps_target: int = 8
+    fps_target: int = 25
     enabled: bool = True
     detection_enabled: bool = True
     mjpeg_url: Optional[str] = None
@@ -431,7 +431,7 @@ class VideoFileCameraAdapter(CameraAdapter):
         self.frame_count = 0
         self.last_frame_time = time.time()
         self.source_fps = None
-        self.frame_queue = queue.Queue(maxsize=20)  # Balanced pre-fetch buffer
+        self.frame_queue = queue.Queue(maxsize=3)  # Small buffer = always-fresh frames
         self.running = False
         self.capture_thread = None
     
@@ -918,14 +918,15 @@ class CameraManager:
                 self.stats['frames_per_camera'][camera_id] += 1
                 self.stats['last_frame_time'][camera_id] = datetime.now()
 
-                # ── STEP 1: Encode display JPEG + publish (throttled) ──────────
-                # Throttling display publication to Redis + Prevent Task Pile-up
+                # ── STEP 1: Encode display JPEG + publish (fire-and-forget) ───
+                # CRITICAL: Never await the encoder — it would pause this camera's
+                # capture loop while JPEG is being written, causing 1-second freezes.
                 now = time.monotonic()
                 if now - self._last_stream_publish.get(camera_id, 0) >= self.stream_publish_interval:
                     if not self._display_encoding_tasks.get(camera_id, False):
                         self._display_encoding_tasks[camera_id] = True
-                        # Run encoding in shared thread pool
                         loop = asyncio.get_running_loop()
+                        # Fire-and-forget: schedule in thread pool without blocking
                         loop.run_in_executor(
                             self._executor,
                             self._encode_and_publish_sync,
@@ -1108,23 +1109,28 @@ class CameraGateway:
         
         while self.running:
             try:
-                message = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                # CRITICAL: pubsub.get_message is a synchronous redis call.
+                # Run it in a thread so it NEVER blocks the asyncio event loop.
+                # Blocking the event loop here would freeze ALL camera streams.
+                message = await asyncio.to_thread(
+                    pubsub.get_message, ignore_subscribe_messages=True
+                )
                 if message:
                     raw_data = message.get('data')
                     if not raw_data:
+                        await asyncio.sleep(0.05)
                         continue
-                        
+
                     data = json.loads(raw_data)
                     action = data.get('action')
                     camera_id = data.get('camera_id')
-                    
+
                     if action == 'delete' and camera_id:
                         logger.info(f"Dynamic removal request for camera {camera_id}")
                         self.camera_manager.remove_camera(camera_id)
-                    
+
                     elif action == 'add' and camera_id:
                         logger.info(f"Dynamic add request for camera {camera_id}")
-                        # Load the new camera from DB
                         try:
                             from models import Camera as CameraModel
                             db = _SessionLocal()
@@ -1156,14 +1162,14 @@ class CameraGateway:
                                     stream_url=c.stream_url
                                 )
                                 self.camera_manager.add_camera(config)
-                                # Start capture task for this camera
                                 asyncio.create_task(self.camera_manager._capture_camera_frames(camera_id))
                                 logger.info(f"Dynamically added and started camera: {config.name}")
                             db.close()
                         except Exception as add_err:
                             logger.error(f"Failed to dynamically add camera {camera_id}: {add_err}")
-                
-                await asyncio.sleep(0.1)
+
+                # Yield to event loop — allows camera coroutines to run freely
+                await asyncio.sleep(0.05)
             except Exception as e:
                 logger.error(f"Error in camera updates listener: {e}")
                 await asyncio.sleep(1.0)

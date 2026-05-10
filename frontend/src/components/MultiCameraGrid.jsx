@@ -45,7 +45,7 @@ const MultiCameraGrid = ({ cameras = [], onCameraSelect, onOpenZoneManager, sele
     return (
       <div
         key={camera.id}
-        className="absolute transition-all duration-700 ease-[cubic-bezier(0.23,1,0.32,1)] p-2"
+        className="absolute transition-all duration-200 ease-out p-2"
         style={{
           left: `${col * cellWidth}%`,
           top: `${row * cellHeight}%`,

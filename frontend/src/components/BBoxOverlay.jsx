@@ -69,13 +69,9 @@ function checkZoneIntrusion(xmin, ymin, xmax, ymax, zones) {
 }
 
 const BBoxOverlay = ({ detections = [], zones = [], showTrajectory = true, showVelocity = true }) => {
-  const [staticObjects, setStaticObjects] = useState([]); // [{ id, class_name, bbox, firstSeen, lastSeen }]
-  const [now, setNow] = useState(Date.now());
-  
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+  const [staticObjects, setStaticObjects] = useState([]);
+  // Derive `now` at render time — no setInterval needed, avoids forced re-renders every second
+  const now = Date.now();
 
   useEffect(() => {
     if (!Array.isArray(detections)) return;

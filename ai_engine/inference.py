@@ -728,11 +728,10 @@ class InferenceEngine:
         # Count unique track IDs
         active_track_ids = [d['track_id'] for d in detection_list if d['track_id'] is not None]
         
-        # ── Throttled snapshot: at most 1 per camera per 30 seconds ──
-        # Snapshots are only useful for event alerts — saving on every frame
-        # floods the disk with thousands of identical images.
+        # ── Snapshot saving (disabled by default — enable with ENABLE_SNAPSHOTS=true) ──
         snapshot_rel_path = None
-        if detection_list:
+        snapshots_enabled = os.getenv("ENABLE_SNAPSHOTS", "false").lower() in {"1", "true", "yes", "on"}
+        if snapshots_enabled and detection_list:
             now_ts = time.time()
             last_snap = getattr(self, '_last_snapshot_ts', {})
             cam_id = frame_data.camera_id
