@@ -1,15 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { 
-  MoreVertical, 
-  Maximize2, 
+import {
+  MoreVertical,
+  Maximize2,
   Minimize2,
-  Activity, 
-  Shield, 
-  Radio, 
-  Eye, 
-  EyeOff, 
-  Thermometer, 
-  Camera as CameraIcon, 
+  Activity,
+  Shield,
+  Radio,
+  Eye,
+  EyeOff,
+  Thermometer,
+  Camera as CameraIcon,
   Settings,
   RefreshCw,
   Zap,
@@ -60,7 +60,7 @@ const CameraCard = ({ camera, onToggleMaximize, isMaximized, onOpenZoneManager }
 
   return (
     <div className="group relative bg-neutral-900 overflow-hidden rounded-[32px] border border-white/5 flex flex-col h-full shadow-2xl transition-all duration-500 hover:border-blue-500/30 hover:shadow-blue-500/10">
-      
+
       {/* ── Overlay Header ── */}
       <div className="absolute top-0 left-0 right-0 z-40 p-4 flex items-center justify-between bg-gradient-to-b from-black/80 to-transparent pointer-events-none">
         <div className="flex items-center space-x-3 pointer-events-auto">
@@ -75,22 +75,21 @@ const CameraCard = ({ camera, onToggleMaximize, isMaximized, onOpenZoneManager }
             <span className="text-[8px] font-bold text-blue-400/60 uppercase tracking-widest">{camera.modality || 'RGB'} Spectrum</span>
           </div>
         </div>
-        
+
         <div className="flex space-x-2 pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity">
-          <button 
+          <button
             onClick={() => onToggleMaximize?.(camera)}
             className="p-2 bg-white/5 backdrop-blur-md rounded-xl border border-white/10 hover:bg-white/10 text-white transition-all transform hover:scale-110"
           >
             {isMaximized ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
-          
+
           <div className="relative" ref={menuRef}>
-            <button 
-              className={`p-2 rounded-xl border transition-all ${
-                isMenuOpen 
-                  ? 'bg-blue-600 border-blue-500 text-white shadow-[0_0_15px_rgba(59,130,246,0.5)]' 
+            <button
+              className={`p-2 rounded-xl border transition-all ${isMenuOpen
+                  ? 'bg-blue-600 border-blue-500 text-white shadow-[0_0_15px_rgba(59,130,246,0.5)]'
                   : 'bg-white/5 backdrop-blur-md border-white/10 hover:bg-white/10 text-white'
-              }`}
+                }`}
               onClick={(e) => {
                 e.stopPropagation();
                 setIsMenuOpen(!isMenuOpen);
@@ -106,8 +105,8 @@ const CameraCard = ({ camera, onToggleMaximize, isMaximized, onOpenZoneManager }
                   <div className="px-3 py-2 mb-1 border-b border-white/5">
                     <p className="text-[10px] font-black text-neutral-500 uppercase tracking-widest">Tactical Options</p>
                   </div>
-                  
-                  <button 
+
+                  <button
                     onClick={handleModalityToggle}
                     className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-white/5 text-left transition-colors group/item"
                   >
@@ -118,7 +117,7 @@ const CameraCard = ({ camera, onToggleMaximize, isMaximized, onOpenZoneManager }
                     <Zap className="w-3 h-3 text-neutral-600 group-hover/item:text-blue-400" />
                   </button>
 
-                  <button 
+                  <button
                     onClick={() => { setShowAI(!showAI); setIsMenuOpen(false); }}
                     className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-white/5 text-left transition-colors"
                   >
@@ -128,7 +127,7 @@ const CameraCard = ({ camera, onToggleMaximize, isMaximized, onOpenZoneManager }
                     </div>
                   </button>
 
-                  <button 
+                  <button
                     onClick={handleSnapshot}
                     className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl hover:bg-white/5 text-left transition-colors"
                   >
@@ -138,7 +137,7 @@ const CameraCard = ({ camera, onToggleMaximize, isMaximized, onOpenZoneManager }
 
                   <div className="h-px bg-white/5 my-1" />
 
-                  <button 
+                  <button
                     onClick={() => { setIsMenuOpen(false); onOpenZoneManager?.(camera); }}
                     className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl hover:bg-white/5 text-left transition-colors"
                   >
@@ -148,7 +147,7 @@ const CameraCard = ({ camera, onToggleMaximize, isMaximized, onOpenZoneManager }
 
                   <div className="h-px bg-white/5 my-1" />
 
-                  <button 
+                  <button
                     onClick={() => { setIsMenuOpen(false); toast.loading('Re-initializing sensor link...'); }}
                     className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl hover:bg-white/5 text-left transition-colors"
                   >
@@ -156,7 +155,7 @@ const CameraCard = ({ camera, onToggleMaximize, isMaximized, onOpenZoneManager }
                     <span className="text-xs font-bold text-neutral-200">Re-initialize Link</span>
                   </button>
 
-                  <button 
+                  <button
                     className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl hover:bg-white/5 text-left transition-colors opacity-50 cursor-not-allowed"
                   >
                     <Settings className="w-4 h-4 text-neutral-400" />
@@ -178,25 +177,24 @@ const CameraCard = ({ camera, onToggleMaximize, isMaximized, onOpenZoneManager }
         <VideoPlayer camera={camera} showAI={showAI} className="w-full h-full" />
       </div>
 
-      {/* ── Footer Stats ── */}
-      <div className="p-4 bg-neutral-900/90 backdrop-blur-xl border-t border-white/5 flex items-center justify-between">
+      {/* ── Footer Stats (compact) ── */}
+      <div className="px-4 py-2 bg-neutral-900/90 backdrop-blur-xl border-t border-white/5 flex items-center justify-between shrink-0">
         <div className="flex items-center space-x-2">
           <div className="px-2 py-0.5 bg-white/5 rounded-md border border-white/10 text-[8px] font-black text-white/40 uppercase tracking-widest font-mono">
-            {camera.config?.resolution || '1080P'}
+            {camera.config?.resolution || camera.resolution || '1080P'}
           </div>
           <div className="h-2 w-px bg-white/10" />
           <div className="flex items-center space-x-1 text-[8px] font-black text-blue-400/80 uppercase tracking-widest">
             <Activity className="w-3 h-3" />
-            <span>{camera.config?.fps || '25'} FPS</span>
+            <span>{camera.config?.fps || camera.fps || '25'} FPS</span>
           </div>
         </div>
-        
-        <div className="flex items-center space-x-1 text-[8px] font-black text-neutral-500 uppercase tracking-widest italic group-hover:text-neutral-300 transition-colors">
+        <div className="flex items-center space-x-1 text-[8px] font-black text-neutral-500 uppercase tracking-widest">
           <Shield className="w-3 h-3 opacity-50" />
           <span>Sector {camera.location || 'Nexus-1'}</span>
         </div>
       </div>
-      
+
       {/* ── Visual Scanning Line (Active State) ── */}
       {isOnline && (
         <div className="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-10 transition-opacity overflow-hidden">
