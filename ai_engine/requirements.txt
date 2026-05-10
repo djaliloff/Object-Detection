@@ -1,4 +1,4 @@
-onnxruntime-gpu==1.25.1
+onnxruntime-gpu==1.26.0
 numpy>=1.26.0
 opencv-python==4.9.0.80
 redis==5.0.1

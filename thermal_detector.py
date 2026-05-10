@@ -11,12 +11,29 @@ import sys
 
 # Fix for ONNX Runtime CUDA DLL loading on Windows
 if sys.platform == 'win32':
-    cuda_path = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9\bin"
-    if os.path.exists(cuda_path):
-        if hasattr(os, 'add_dll_directory'):
-            os.add_dll_directory(cuda_path)
-        else:
-            os.environ['PATH'] = cuda_path + os.pathsep + os.environ['PATH']
+    cuda_paths = []
+    try:
+        import onnxruntime
+        ort_path = os.path.join(os.path.dirname(onnxruntime.__file__), "capi")
+        if os.path.exists(ort_path): cuda_paths.append(ort_path)
+    except ImportError: pass
+    try:
+        import torch
+        torch_lib = os.path.join(os.path.dirname(torch.__file__), "lib")
+        if os.path.exists(torch_lib): cuda_paths.append(torch_lib)
+    except ImportError: pass
+    cuda_paths.extend([
+        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9\bin",
+        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin",
+        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8\bin"
+    ])
+    for cp in cuda_paths:
+        if os.path.exists(cp):
+            if hasattr(os, 'add_dll_directory'):
+                try: os.add_dll_directory(cp)
+                except Exception: pass
+            if cp not in os.environ['PATH']:
+                os.environ['PATH'] = cp + os.pathsep + os.environ['PATH']
 
 def nms(boxes, scores, iou_threshold):
     x1 = boxes[:, 0]

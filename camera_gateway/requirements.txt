@@ -9,3 +9,4 @@ pydantic>=2.10.0
 asyncio-mqtt==0.16.1
 # gstreamer==1.22.8 (System dependency)
 python-dotenv==1.0.0
+onnxruntime-gpu>=1.17.0

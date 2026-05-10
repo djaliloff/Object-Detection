@@ -1,14 +1,32 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, Text, ForeignKey, JSON
-from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
 import uuid
 
+# Use GUID/JSON compatible with both SQLite and Postgres
+from sqlalchemy.types import TypeDecorator, CHAR
+import json
+
+class GUID(TypeDecorator):
+    """Platform-independent GUID type."""
+    impl = CHAR
+    cache_ok = True
+    def load_dialect_impl(self, dialect):
+        return dialect.type_descriptor(CHAR(36))
+    def process_bind_param(self, value, dialect):
+        if value is None: return value
+        return str(value)
+    def process_result_value(self, value, dialect):
+        if value is None: return value
+        return uuid.UUID(value)
+
+JSONB = JSON # Alias for SQLite compatibility
+
 class User(Base):
     __tablename__ = "users"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
     username = Column(String(50), unique=True, nullable=False, index=True)
     email = Column(String(100), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
@@ -20,7 +38,7 @@ class User(Base):
 class CameraGroup(Base):
     __tablename__ = "camera_groups"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
     name = Column(String(100), nullable=False)
     description = Column(Text)
     location = Column(String(200))
@@ -32,7 +50,7 @@ class CameraGroup(Base):
 class Camera(Base):
     __tablename__ = "cameras"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
     name = Column(String(100), nullable=False)
     ip = Column(String(45), nullable=False)
     port = Column(Integer, default=554)
@@ -43,7 +61,7 @@ class Camera(Base):
     stream_url = Column(String(500))
     credentials = Column(JSONB)  # Encrypted credentials
     modality = Column(String(20), nullable=False, default="rgb")  # rgb, thermal, rgb_t
-    group_id = Column(UUID(as_uuid=True), ForeignKey("camera_groups.id"))
+    group_id = Column(GUID(), ForeignKey("camera_groups.id"))
     location = Column(String(200))
     resolution = Column(String(20), default="1920x1080")
     fps = Column(Integer, default=30)
@@ -68,8 +86,8 @@ class Camera(Base):
 class Frame(Base):
     __tablename__ = "frames"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    camera_id = Column(UUID(as_uuid=True), ForeignKey("cameras.id"), nullable=False)
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    camera_id = Column(GUID(), ForeignKey("cameras.id"), nullable=False)
     timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
     frame_number = Column(Integer, nullable=False)
     modality = Column(String(20), nullable=False)
@@ -83,9 +101,9 @@ class Frame(Base):
 class Detection(Base):
     __tablename__ = "detections"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    frame_id = Column(UUID(as_uuid=True), ForeignKey("frames.id"), nullable=False)
-    camera_id = Column(UUID(as_uuid=True), ForeignKey("cameras.id"), nullable=False)
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    frame_id = Column(GUID(), ForeignKey("frames.id"), nullable=False)
+    camera_id = Column(GUID(), ForeignKey("cameras.id"), nullable=False)
     timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
     object_class = Column(String(50), nullable=False)
     bbox = Column(JSONB, nullable=False)  # {"x1": 0, "y1": 0, "x2": 100, "y2": 100}
@@ -100,7 +118,7 @@ class Track(Base):
     __tablename__ = "tracks"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    camera_id = Column(UUID(as_uuid=True), ForeignKey("cameras.id"), nullable=False)
+    camera_id = Column(GUID(), ForeignKey("cameras.id"), nullable=False)
     object_class = Column(String(50), nullable=False)
     first_seen = Column(DateTime(timezone=True), nullable=False)
     last_seen = Column(DateTime(timezone=True), nullable=False)
@@ -112,14 +130,14 @@ class Track(Base):
 class Event(Base):
     __tablename__ = "events"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
     event_type = Column(String(50), nullable=False)  # intrusion, loitering, line_crossing, abandoned_object
-    camera_id = Column(UUID(as_uuid=True), ForeignKey("cameras.id"), nullable=False)
+    camera_id = Column(GUID(), ForeignKey("cameras.id"), nullable=False)
     track_id = Column(Integer)
     start_time = Column(DateTime(timezone=True), nullable=False)
     end_time = Column(DateTime(timezone=True))
     severity = Column(String(20), default="medium")  # low, medium, high, critical
-    zone_id = Column(UUID(as_uuid=True), ForeignKey("zones.id"))
+    zone_id = Column(GUID(), ForeignKey("zones.id"))
     event_data = Column(JSONB)  # Additional event-specific data
     status = Column(String(20), default="new")  # new, viewed, resolved
     snapshot_refs = Column(JSONB)  # Paths to snapshot images
@@ -132,8 +150,8 @@ class Event(Base):
 class Zone(Base):
     __tablename__ = "zones"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    camera_id = Column(UUID(as_uuid=True), ForeignKey("cameras.id"), nullable=False)
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    camera_id = Column(GUID(), ForeignKey("cameras.id"), nullable=False)
     name = Column(String(100), nullable=False)
     polygon = Column(JSONB)  # For polygon zones: [[x1, y1], [x2, y2], ...]
     zone_type = Column(String(20), nullable=False)  # exclusion, counting, alert
@@ -148,8 +166,8 @@ class Zone(Base):
 class AuditLog(Base):
     __tablename__ = "audit_log"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    user_id = Column(GUID(), ForeignKey("users.id"))
     action = Column(String(100), nullable=False)
     resource = Column(String(100))
     timestamp = Column(DateTime(timezone=True), server_default=func.now(), index=True)

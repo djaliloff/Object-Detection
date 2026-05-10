@@ -136,3 +136,27 @@ coverage.xml
 venv311/
 yolov8n.pt
 yolov8n.onnx
+
+# Uploads and snapshots
+uploads/
+snapshots/
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+
+# Additional logs and temp files
+*.log
+backend.log
+engine.log
+gateway.log
+redis.log
+dump.rdb
+execution.txt
+redis.zip
+
+# Performance and benchmark files
+*_results.json
+benchmark_results.json

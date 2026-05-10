@@ -24,11 +24,8 @@ from shapely.geometry import Point, Polygon, LineString, box
 from shapely.ops import nearest_points
 import uuid
 from dotenv import load_dotenv
-try:
-    from event_processor.notification_service import notification_service
-except ImportError:
-    # Fallback for running as a direct script
-    from notification_service import notification_service
+# Local imports
+from notification_service import notification_service
 
 from database import SessionLocal
 from models import Zone as DBZone, Camera as DBCamera, Event as DBEvent
@@ -801,7 +798,9 @@ class EventProcessor:
                     continue
                 
                 start_time = time.time()
-                msg = json.loads(detection_data.decode('utf-8'))
+                if isinstance(detection_data, bytes):
+                    detection_data = detection_data.decode('utf-8')
+                msg = json.loads(detection_data)
                 detections = self._deserialize_detections(msg)
                 snapshot_path = msg.get('snapshot_path')
                 

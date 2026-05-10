@@ -3,15 +3,40 @@ import sys
 
 # Fix for ONNX Runtime CUDA DLL loading on Windows (MUST BE BEFORE IMPORTING ONNXRUNTIME)
 if sys.platform == 'win32':
-    cuda_path = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9\bin"
-    # Also check for torch's bundled cuDNN
-    torch_lib = os.path.join(os.path.dirname(__file__), "..", "venv311", "Lib", "site-packages", "torch", "lib")
+    cuda_paths = []
     
-    for path in [torch_lib, cuda_path]:
+    # 1. Try to find DLLs via package paths
+    try:
+        import onnxruntime
+        ort_path = os.path.join(os.path.dirname(onnxruntime.__file__), "capi")
+        if os.path.exists(ort_path): cuda_paths.append(ort_path)
+    except ImportError: pass
+
+    try:
+        import torch
+        torch_lib = os.path.join(os.path.dirname(torch.__file__), "lib")
+        if os.path.exists(torch_lib): cuda_paths.append(torch_lib)
+    except ImportError: pass
+    
+    # 2. Standard CUDA paths
+    cuda_paths.extend([
+        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9\bin",
+        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin",
+        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8\bin"
+    ])
+    
+    if os.getenv("CUDA_PATH"):
+        cuda_paths.append(os.path.join(os.getenv("CUDA_PATH"), "bin"))
+
+    # 3. Apply paths
+    for path in cuda_paths:
         if os.path.exists(path):
             if hasattr(os, 'add_dll_directory'):
-                os.add_dll_directory(path)
-            os.environ['PATH'] = path + os.pathsep + os.environ['PATH']
+                try:
+                    os.add_dll_directory(path)
+                except Exception: pass
+            if path not in os.environ['PATH']:
+                os.environ['PATH'] = path + os.pathsep + os.environ['PATH']
 
 import base64
 import json
@@ -226,6 +251,10 @@ class ModelRegistry:
     def _load_single_model(self, model_name: str, model_config: Dict):
         """Load a single model: ONNX via onnxruntime or .pt via Ultralytics YOLO."""
         model_path = model_config.get('model_path')
+        if not model_path:
+            logger.warning(f"Model path missing for model {model_name}")
+            return
+            
         if not os.path.exists(model_path):
             logger.warning(f"Model file not found: {model_path}")
             return
@@ -301,18 +330,30 @@ class ModelRegistry:
         if camera_id and camera_id in camera_models:
             return camera_models[camera_id]
             
+        # Strict enforcement: Thermal cameras MUST use thermal models
         if modality == 'thermal':
-            return routing_config.get('default_thermal_model', 'thermal_yolov8n')
+            model = routing_config.get('default_thermal_model', 'thermal_yolov8n')
+            if model in self.models:
+                return model
+            # Fallback to any thermal model
+            for name, info in self.models.items():
+                if info.get('config', {}).get('modality') == 'thermal':
+                    return name
+            return 'thermal_yolov8n'
+
+        # Strict enforcement: RGB cameras MUST use RGB models
+        if modality == 'rgb':
+            # GPU-specific routing for RGB models
+            if torch.cuda.is_available() and self.device == 'cuda':
+                gpu_routing = routing_config.get('gpu_routing', {})
+                for gpu_model_name in gpu_routing.values():
+                    if gpu_model_name in self.models:
+                        return gpu_model_name
+            
+            return routing_config.get('default_rgb_model', 'rgb_yolov8n_ultra_low_latency')
 
         if modality == 'rgb_t' or modality == 'fused':
             return routing_config.get('default_fusion_model', 'rgb_t_fusion')
-
-        # GPU-specific routing for RGB models
-        if torch.cuda.is_available() and self.device == 'cuda':
-            gpu_routing = routing_config.get('gpu_routing', {})
-            for gpu_model_name in gpu_routing.values():
-                if gpu_model_name in self.models:
-                    return gpu_model_name
 
         return routing_config.get('default_rgb_model', 'rgb_yolov8n_ultra_low_latency')
 
@@ -562,7 +603,7 @@ class InferenceEngine:
         # Frame skipping
         self.frame_skip = frame_skip
         self.frame_counters = {}
-        self.parallel_processing_time = 0
+        self.parallel_processing_time = 0.0
         self.publish_annotated_frames = os.getenv("PUBLISH_ANNOTATED_FRAMES", "").lower() in {"1", "true", "yes", "on"}
         
         # Performance metrics
@@ -608,25 +649,31 @@ class InferenceEngine:
                 time.sleep(5)
     
     def _deserialize_frame(self, frame_data: bytes) -> FrameData:
-        """Deserialize frame data from Redis."""
+        """Deserialize binary frame data from Redis [header_size(4b)][header_json][raw_jpeg_bytes]."""
         try:
-            data = json.loads(frame_data.decode('utf-8'))
+            import struct
+            header_size = struct.unpack("I", frame_data[:4])[0]
+            header_bytes = frame_data[4:4+header_size]
+            image_bytes = frame_data[4+header_size:]
             
-            import base64
-            image_bytes = base64.b64decode(data['image_data'])
+            header = json.loads(header_bytes.decode('utf-8'))
+            
             image_array = np.frombuffer(image_bytes, dtype=np.uint8)
             image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
             
+            if image is None:
+                raise ValueError(f"Failed to decode image data for frame {header.get('f')}")
+            
             return FrameData(
-                camera_id=data['camera_id'],
-                frame_id=data['frame_id'],
-                timestamp=datetime.fromisoformat(data['timestamp']),
-                modality=data['modality'],
+                camera_id=header['c'],
+                frame_id=header['f'],
+                timestamp=datetime.fromisoformat(header['t']),
+                modality=header['m'],
                 image_data=image,
-                metadata=data.get('metadata', {})
+                metadata={} # Optional, simplified for speed
             )
         except Exception as e:
-            logger.error(f"Failed to deserialize frame: {e}")
+            logger.error(f"Failed to deserialize binary frame: {e}")
             raise
     
     def _serialize_detections(self, tracked_objects: List[TrackedObject], frame_data: FrameData) -> bytes:
@@ -773,14 +820,28 @@ class InferenceEngine:
                     await asyncio.sleep(0.005)
                     continue
                 
-                # Keep only the latest frame from each camera
-                latest_frames = {}
+                # 1) PRE-FILTER: Only deserialize the LATEST frame for each camera in this batch
+                latest_frame_data = {}
+                import struct
+                
                 for frame_data in queue_content:
                     try:
-                        frame = self._deserialize_frame(frame_data)
-                        latest_frames[frame.camera_id] = frame
+                        # Fast-peek at the camera_id without full deserialization
+                        # Header format: [header_size(4b)][header_json]
+                        h_size = struct.unpack("I", frame_data[:4])[0]
+                        h_json = json.loads(frame_data[4:4+h_size].decode('utf-8'))
+                        cam_id = h_json['c']
+                        latest_frame_data[cam_id] = frame_data
                     except Exception as e:
-                        logger.error(f"Error deserializing frame: {e}")
+                        logger.warning(f"Failed to peek frame header: {e}")
+
+                # 2) DESERIALIZE only what we need
+                latest_frames = {}
+                for cam_id, data in latest_frame_data.items():
+                    try:
+                        latest_frames[cam_id] = self._deserialize_frame(data)
+                    except Exception as e:
+                        logger.error(f"Error deserializing latest frame for {cam_id}: {e}")
                 
                 # Process cameras
                 if latest_frames:
@@ -819,9 +880,11 @@ class InferenceEngine:
             start_time = time.time()
             
             # ═══════════════════════════════════════════════════════════
-            # Run detection + tracking in one pass (BoT-SORT / ByteTrack)
+            # Run detection + tracking (OFFLOADED TO THREAD to keep loop fluid)
             # ═══════════════════════════════════════════════════════════
-            detections, raw_results = self.model_registry.run_inference_with_tracking(frame, persist=True)
+            detections, raw_results = await asyncio.to_thread(
+                self.model_registry.run_inference_with_tracking, frame, True
+            )
             
             inference_time = time.time() - start_time
             
