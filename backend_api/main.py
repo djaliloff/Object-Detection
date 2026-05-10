@@ -41,7 +41,7 @@ import structlog
 logger = structlog.get_logger()
 
 # --- Performance Tunables (via .env) ---
-MJPEG_IDLE_SLEEP    = float(os.getenv("MJPEG_IDLE_SLEEP", "0.02"))   # seconds (50 fps cap)
+MJPEG_IDLE_SLEEP    = float(os.getenv("MJPEG_IDLE_SLEEP", "0.016"))   # seconds (~60 fps cap)
 WS_DETECTION_INTERVAL = float(os.getenv("WS_DETECTION_INTERVAL", "0.1"))  # seconds
 
 # Create database tables (only if database is available)
@@ -246,8 +246,8 @@ async def stream_camera_mjpeg(camera_id: str):
                     await asyncio.sleep(MJPEG_IDLE_SLEEP)
                 else:
                     idle_cycles += 1
-                    # Back-off: wait longer when no frame is available yet
-                    await asyncio.sleep(min(0.05 * idle_cycles, 0.5))
+                    # Fixed small sleep — no exponential backoff that would stall reconnecting streams
+                    await asyncio.sleep(0.016)
 
             except asyncio.CancelledError:
                 break

@@ -42,7 +42,7 @@ Start-Sleep -Seconds 2
 # 6. Frontend
 Write-Host "[6/6] Starting Frontend..." -ForegroundColor Yellow
 if (Test-Path "$ROOT\frontend\node_modules") {
-    Start-Process "cmd.exe" -ArgumentList "/k npm start" -WorkingDirectory "$ROOT\frontend" -WindowStyle Normal
+    Start-Process "cmd.exe" -ArgumentList "/k npm run dev" -WorkingDirectory "$ROOT\frontend" -WindowStyle Normal
 } else {
     Write-Host "[WARNING] Run 'npm install' in frontend/ first." -ForegroundColor Red
 }

@@ -55,7 +55,7 @@ timeout /t 2 /nobreak > nul
 :: 6. Start Frontend
 echo [6/6] Starting Frontend Dashboard...
 if exist "frontend\node_modules" (
-    start "Frontend Dashboard" /d "%ROOT_DIR%frontend" cmd /k "npm start"
+    start "Frontend Dashboard" /d "%ROOT_DIR%frontend" cmd /k "npm run dev"
 ) else (
     echo [WARNING] frontend/node_modules not found. Run 'npm install' in the frontend directory.
 )
